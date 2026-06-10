@@ -1,0 +1,155 @@
+# Writing Custom Nodes
+
+NBT discovers nodes automatically: any `.py` file in the `nodes/` folder containing a subclass of `BaseNode` is loaded at startup (or via *Reload nodes/* in the app). No registration code is needed — drop the file in and the node appears in the palette.
+
+## Minimal example
+
+```python
+# nodes/string_length.py
+from nbt.core.node_base import BaseNode
+
+class StringLength(BaseNode):
+    type_name = "string_length"     # unique key, stored in saved flows
+    label = "String Length"         # shown on the node in the editor
+    category = "Strings"            # groups the palette / Add Node menu
+    inputs = {"text": ""}           # input name -> default value
+    outputs = ["length"]            # documents what run() returns
+
+    def run(self, inputs, ctx):
+        return {"length": len(inputs["text"])}
+```
+
+## Class attributes
+
+| Attribute | Required | Purpose |
+|---|---|---|
+| `type_name` | yes | Unique identifier. Saved flows reference nodes by this key, so renaming it breaks existing flows that use the node. Must not be `"base"` or empty. |
+| `label` | yes | Display name in the editor and palette. Safe to change anytime. |
+| `category` | no | Palette grouping. Defaults to `"General"`. |
+| `inputs` | no | Dict of `name -> default value`. Each entry becomes an editable field on the node. |
+| `outputs` | no | List of output key names. Purely documentation — helps users of your node know what to reference. |
+
+### How input defaults map to widgets
+
+The *type of the default value* decides the widget rendered on the node:
+
+| Default type | Widget |
+|---|---|
+| `bool` (`False`) | checkbox |
+| `int` (`3`) | integer box |
+| `float` (`1.5`) | float box |
+| anything else (`""`) | text box (supports `{{ }}` templating) |
+
+So `inputs = {"url": "", "retries": 3, "strict": False}` renders a text field, an int spinner and a checkbox.
+
+## Methods
+
+### `run(self, inputs, ctx) -> dict`
+
+The node's work happens here.
+
+- `inputs` — the node's input values, already resolved: numbers/bools come typed, and any `{{ expression }}` templates in string inputs have been evaluated.
+- `ctx` — the execution context so far: `{node_name: outputs_dict}` for every previously executed node, plus `ctx["last"]` (outputs of the previous node).
+- Return a dict of outputs. Returning `None` becomes `{}`; returning a non-dict is wrapped as `{"value": ...}`.
+- **Raise any exception to fail the node** — and with it, the whole flow. Use `NodeError` for clean messages:
+
+```python
+from nbt.core.node_base import NodeError
+
+def run(self, inputs, ctx):
+    if not inputs["url"].startswith("http"):
+        raise NodeError(f"invalid url: {inputs['url']!r}")
+    ...
+```
+
+### `check(self, outputs, inputs, ctx) -> None` (optional)
+
+The class-level assert hook, called right after `run()`. Raise (e.g. `AssertionFailure` or a plain `assert`) to fail the node. Use it for validations that should *always* apply to this node type:
+
+```python
+from nbt.core.node_base import AssertionFailure
+
+def check(self, outputs, inputs, ctx):
+    if outputs["status"] >= 500:
+        raise AssertionFailure(f"server error: {outputs['status']}")
+```
+
+## What happens at execution time
+
+For each node in the chain, in order:
+
+1. **Condition** (set per-node in the editor) is evaluated. Falsy → node is **skipped**, flow continues. An error in the expression fails the flow.
+2. **Inputs are resolved** — `{{ expression }}` templates in string inputs are evaluated against `ctx`. If the *entire* value is one template (`{{ upper['value'] }}`), the raw object is passed (not a string), so dicts/numbers flow between nodes intact.
+3. **`run()`** executes. Raising fails the node.
+4. **`check()`** hook runs. Raising fails the node.
+5. **Assert expression** (set per-node in the editor) is evaluated with `last` bound to this node's own outputs. Falsy or raising fails the node.
+6. Outputs are stored: `ctx[node_name] = outputs` and `ctx["last"] = outputs`.
+
+Any failure stops the flow immediately and the execution is recorded as FAILED with the step's error, inputs and traceback in the Executions panel.
+
+## Expressions cheat sheet
+
+Conditions, asserts and templates are Python expressions with safe builtins (`len`, `str`, `int`, `min`, `max`, `sorted`, ...). Available names:
+
+- `last` — outputs of the previous node (in the assert field: this node's outputs)
+- `<node name>` — outputs of any earlier node, e.g. `get_user['status']`
+- `ctx` — the whole context dict, useful when a node name isn't a valid identifier: `ctx['my node']['value']`
+
+Examples:
+
+```text
+condition:  get_token['status'] == 200
+assert:     last['json']['id'] > 0
+input:      Bearer {{ get_token['json']['access_token'] }}
+input:      {{ user['json'] }}          # passes the dict itself, not a string
+```
+
+## A complete realistic example
+
+```python
+# nodes/json_path.py
+"""Extract a value from a previous node's JSON output."""
+from nbt.core.node_base import BaseNode, NodeError
+
+class JsonPath(BaseNode):
+    type_name = "json_path"
+    label = "JSON Path"
+    category = "Data"
+    inputs = {
+        "data": "{{ last['json'] }}",   # default pulls previous node's json
+        "path": "a.b.0.c",              # dot path, ints index lists
+        "required": True,
+    }
+    outputs = ["value"]
+
+    def run(self, inputs, ctx):
+        cur = inputs["data"]
+        for part in str(inputs["path"]).split("."):
+            try:
+                cur = cur[int(part)] if part.lstrip("-").isdigit() else cur[part]
+            except (KeyError, IndexError, TypeError):
+                if inputs["required"]:
+                    raise NodeError(f"path not found at {part!r}")
+                return {"value": None}
+        return {"value": cur}
+```
+
+## Rules and good practice
+
+- **One file can hold several node classes**; each needs its own `type_name`.
+- Files starting with `_` are ignored.
+- **A broken node file never crashes the app** — the import error appears under *Load errors* in the palette. Duplicate `type_name`s are rejected with an error there too.
+- Keep `run()` deterministic where possible and put the data in outputs rather than printing — outputs are persisted per step and visible in the step detail view.
+- Heavy work is fine (runs happen on a background thread), but respect timeouts yourself (see `nodes/http_request.py`).
+- You can import anything you like (stdlib or installed packages) — node code is ordinary Python. Only the *expression fields* are restricted.
+- Test headless without the GUI: `python main.py --run "My Flow"` (exit code 0 = passed) — convenient for CI.
+
+## Bundled nodes to learn from
+
+| File | Shows |
+|---|---|
+| `nodes/set_value.py` | the smallest possible node |
+| `nodes/python_eval.py` | reusing the engine's `safe_eval` |
+| `nodes/http_request.py` | error handling, typed inputs, `NodeError` |
+| `nodes/delay.py` | float input, side-effect node |
+| `nodes/assert_equals.py` | the `check()` assert hook |
