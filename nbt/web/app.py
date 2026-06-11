@@ -389,6 +389,15 @@ class WebApp:
     def refresh_executions(self):
         self.exec_table.rows = self._exec_rows()
         self.exec_table.update()
+        self._update_exec_header()
+
+    def _update_exec_header(self):
+        rows = self.exec_table.rows
+        label = f"Executions ({len(rows)})"
+        if rows:
+            label += f" - last: {rows[0]['status']}"
+        self.exec_expansion.text = label
+        self.exec_expansion.update()
 
     def on_clear_executions(self):
         self.db.clear_executions()
@@ -434,12 +443,30 @@ class WebApp:
         ui.add_body_html(f"<script>{js}</script>")
         ui.dark_mode().enable()
 
+        # dark theme palette
+        ui.add_head_html("""<style>
+            body.body--dark { background: #0f1115; }
+            .q-header { background: #16181d !important;
+                        border-bottom: 1px solid #2a2e37; }
+            body.body--dark .q-card { background: #16181d; }
+            body.body--dark .q-table { background: #131519; }
+            body.body--dark .q-table thead tr { background: #1a1d23; }
+            body.body--dark .q-table tbody tr:hover { background: #1e222a; }
+            body.body--dark .q-expansion-item { background: #131519;
+                                                border-radius: 4px; }
+            body.body--dark .q-field--outlined .q-field__control {
+                background: #131519; }
+            body.body--dark .q-menu { background: #1a1d23; }
+            body.body--dark .q-field__native, body.body--dark .q-item {
+                color: #d4d8df; }
+        </style>""")
+
         # desktop-style density: kill the web-app whitespace
         ui.add_head_html("""<style>
             .nicegui-content { padding: 6px; }
             .nicegui-column { gap: 4px; }
             .nicegui-row { gap: 4px; }
-            .q-header { padding: 2px 6px; min-height: 0; }
+            .q-header { padding: 4px 6px; min-height: 0;align-items:center; }
             .q-btn { text-transform: none; padding: 2px 8px; min-height: 24px; }
             .q-table th, .q-table td { padding: 2px 8px !important;
                                        height: 24px !important; }
@@ -449,15 +476,30 @@ class WebApp:
                                                     height: 30px; }
             .q-card { padding: 8px; }
             .q-dialog .q-card { gap: 4px; }
-            aside .q-btn { justify-content: flex-start; min-height: 22px;
-                           font-size: 12px; }
+            .q-expansion-item .q-item { min-height: 26px; padding: 2px 8px; }
+            .q-field--dense .q-field__control { height: 28px;
+                                                min-height: 28px; }
+            .q-field--dense.q-textarea .q-field__control { height: auto; }
+            .q-notification { min-height: 28px; padding: 4px 10px; }
+            .step-detail .q-field__control,
+            .step-detail .q-field__control-container,
+            .step-detail textarea { height: 100% !important;
+                                    font-family: monospace; }
+                        .q-header .q-select>div>div>div>div{
+                           align-items:start;
+                         }
+                         .graphdialog button.rounded, .graphdialog input.rounded {
+    padding-left: 10px;
+    padding-right: 9px;
+                         }
         </style>""")
 
         # ----- header -----
-        with ui.header().classes("items-center gap-1"):
+        with ui.header().classes("items-start gap-1"):
             ui.label("NBT").classes("text-lg font-bold mr-2")
+            ui.label("Flow:").classes("text-sm")
             self.flow_select = ui.select(
-                self._flow_options(), label="Flow",
+                self._flow_options(),
                 on_change=self.on_flow_change).classes("w-52").props(
                 "dense outlined")
             ui.button("New", on_click=lambda: self.new_flow_dialog.open()
@@ -469,9 +511,10 @@ class WebApp:
             ui.button("Del", on_click=lambda: self.delete_flow_dialog.open()
                       ).props("dense color=negative")
             ui.space()
+            ui.label("Env:").classes("text-sm")
             self.env_select = ui.select(
-                ["(none)"] + self._env_names(), value="(none)",
-                label="Env").classes("w-36").props("dense outlined")
+                ["(none)"] + self._env_names(), value="(none)"
+            ).classes("w-36").props("dense outlined")
             ui.button("Envs", on_click=lambda: self.env_dialog.open()
                       ).props("dense")
             ui.button("Save", on_click=self.save_current).props("dense")
@@ -485,49 +528,35 @@ class WebApp:
                                   self.listeners_dialog.open())
             ).props("dense flat")
 
-        # ----- left drawer: palette -----
-        with ui.left_drawer(bordered=True).classes("p-1").props(
-                "width=200") as self.drawer:
-            ui.label("Add node").classes("font-bold")
-            cats = {}
-            for m in metas:
-                cats.setdefault(m["category"], []).append(m)
-            for cat, items in sorted(cats.items()):
-                ui.label(cat).classes("text-grey text-xs mt-1")
-                for m in items:
-                    label = m["label"] + (" ⚡" if m["is_trigger"] else "")
-                    ui.button(
-                        label,
-                        on_click=lambda m=m: ui.run_javascript(
-                            f'window.nbt.addNode({json.dumps(m["type"])})')
-                    ).props("dense flat align=left").classes("w-full")
-            if self.registry.errors:
-                ui.label("Load errors").classes("text-negative mt-4")
-                for fname, err in self.registry.errors:
-                    ui.label(f"{fname}: {err}").classes(
-                        "text-negative text-xs")
-
         # ----- main: canvas + executions -----
+        # (no palette drawer: add nodes via right-click on the canvas)
         with ui.column().classes("w-full"):
             ui.html('<canvas id="nbt-canvas" style="display:block"></canvas>'
                     ).classes("w-full").style(
-                "height: 60vh; border: 1px solid #444; border-radius: 4px;")
-            with ui.row().classes("items-center w-full gap-1"):
-                ui.label("Executions").classes("font-bold")
-                ui.button("Refresh", on_click=self.refresh_executions
-                          ).props("dense flat")
-                ui.button("Clear history", on_click=self.on_clear_executions
-                          ).props("dense flat color=negative")
-            self.exec_table = ui.table(
-                columns=EXEC_COLUMNS, rows=self._exec_rows(), row_key="id",
-                pagination=10).classes("w-full").props("dense flat bordered")
-            self.exec_table.on(
-                "rowClick", lambda e: self.show_steps(e.args[1]["id"]))
+                "height: 66vh; border: 1px solid #2a2e37; "
+                "border-radius: 4px; background: #16181d;")
+            with ui.expansion("Executions", icon="history", value=False
+                              ).classes("w-full").props(
+                "dense dense-toggle") as self.exec_expansion:
+                with ui.row().classes("items-center w-full gap-1"):
+                    ui.button("Refresh", on_click=self.refresh_executions
+                              ).props("dense flat")
+                    ui.button("Clear history",
+                              on_click=self.on_clear_executions
+                              ).props("dense flat color=negative")
+                self.exec_table = ui.table(
+                    columns=EXEC_COLUMNS, rows=self._exec_rows(),
+                    row_key="id", pagination=10
+                ).classes("w-full").props("dense flat bordered")
+                self.exec_table.on(
+                    "rowClick", lambda e: self.show_steps(e.args[1]["id"]))
+            self._update_exec_header()
 
         # ----- dialogs -----
         with ui.dialog() as self.new_flow_dialog, ui.card():
             ui.label("New flow")
-            self.new_flow_name = ui.input("name").classes("w-64")
+            self.new_flow_name = ui.input("name").classes("w-64").props(
+                "dense outlined")
             with ui.row():
                 ui.button("Create", on_click=self.on_new_flow)
                 ui.button("Cancel",
@@ -535,7 +564,8 @@ class WebApp:
 
         with ui.dialog() as self.rename_flow_dialog, ui.card():
             ui.label("Rename flow")
-            self.rename_flow_name = ui.input("new name").classes("w-64")
+            self.rename_flow_name = ui.input("new name").classes(
+                "w-64").props("dense outlined")
             with ui.row():
                 ui.button("Rename", on_click=self.on_rename_flow)
                 ui.button("Cancel",
@@ -555,12 +585,14 @@ class WebApp:
             ui.label("Environments").classes("text-lg font-bold")
             self.env_list = ui.select(self._env_names(), label="existing",
                                       on_change=self.on_env_pick
-                                      ).classes("w-full")
-            self.env_name_input = ui.input("name").classes("w-full")
+                                      ).classes("w-full").props(
+                "dense outlined")
+            self.env_name_input = ui.input("name").classes("w-full").props(
+                "dense outlined")
             self.env_vars_input = ui.textarea(
                 "variables (JSON object)",
                 placeholder='{"base_url": "https://staging.example.com"}'
-            ).classes("w-full").props("rows=6")
+            ).classes("w-full").props("rows=6 dense outlined")
             with ui.row():
                 ui.button("New", on_click=lambda: (
                     self.env_name_input.set_value(""),
@@ -582,19 +614,22 @@ class WebApp:
                           ).props("flat")
 
         with ui.dialog() as self.steps_dialog, \
-                ui.card().classes("w-[760px]"):
+                ui.card().classes("w-[900px] max-w-[95vw]").style(
+                    "height: 85vh; display: flex; flex-direction: column;"):
             self.steps_header = ui.label("Steps").classes("font-bold")
             self.steps_table = ui.table(
                 columns=STEP_COLUMNS, rows=[], row_key="key",
-                pagination=6).classes("w-full").props("dense")
+                pagination=8).classes("w-full").props("dense flat bordered")
             self.steps_table.on(
                 "rowClick",
                 lambda e: self.step_detail.set_value(
                     self._step_details.get(e.args[1]["key"], "")))
             self.step_detail = ui.textarea("step detail").classes(
-                "w-full").props("readonly rows=8")
-            ui.button("Close", on_click=self.steps_dialog.close
-                      ).props("flat")
+                "w-full step-detail").props("readonly dense outlined"
+                                            ).style("flex: 1 1 auto;")
+            with ui.row().classes("w-full justify-end"):
+                ui.button("Close", on_click=self.steps_dialog.close
+                          ).props("flat")
 
         self._step_details = {}
         ui.timer(2.0, self._tick)
@@ -605,6 +640,9 @@ class WebApp:
             ui.notify("Editor failed to load (check the browser console).",
                       type="negative")
             return
+        for fname, err in self.registry.errors:  # surface broken node files
+            ui.notify(f"Node load error - {fname}: {err}",
+                      type="negative", timeout=10000)
         flows = self.db.list_flows()
         if flows and not self.current_flow_id:
             await self.load_flow(flows[0]["id"])

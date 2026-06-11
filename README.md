@@ -18,7 +18,7 @@ A `Demo Flow` is seeded on first launch. The database lives at `data/nbt.db`. Li
 
 ## Using the editor
 
-The header holds the flow selector and CRUD buttons (New / Rename / Dup / Del), the environment picker, and Save / Run / Listen. The left drawer is the node palette — click a type to add it (or right-click the canvas). Drag from a node's `out` pin to another node's `in` pin to connect; the canvas pans and zooms natively (mouse wheel). The executions table below the canvas is sortable; click a run to see its steps, click a step for inputs/outputs/error detail.
+The header holds the flow selector and CRUD buttons (New / Rename / Dup / Del), the environment picker, and Save / Run / Listen. To add a node, right-click the canvas and pick from the menu (or double-click for the search box). Drag from a node's `out` pin to another node's `in` pin to connect; the canvas pans and zooms natively (mouse wheel). The executions table below the canvas is sortable; click a run to see its steps, click a step for inputs/outputs/error detail.
 
 Each node has its declared **inputs**, a **condition** expression (falsy → node is skipped) and an **assert** expression (falsy → node fails). Each declared output gets an alias box (`→ value`): type a variable name (e.g. `casenumber`) and that output is published flat into the context — later nodes can use `casenumber` / `{{ casenumber }}` / `ctx['casenumber']`. Use `last` for the previous node's outputs.
 
