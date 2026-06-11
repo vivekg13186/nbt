@@ -11,6 +11,7 @@ ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
 from nbt.core.engine import Engine, build_chain, FlowValidationError  # noqa
+from nbt.core.listener import FlowListener                            # noqa
 from nbt.core.registry import NodeRegistry                            # noqa
 from nbt.db.database import Database                                  # noqa
 
@@ -147,8 +148,117 @@ def main():
     _, status, err = engine.execute(fid, "t1b", {"nodes": [], "links": []})
     check("invalid graph -> error status", status == "error", str(err))
 
+    # ---- output aliases publish flat context variables ----
+    n1 = node("n1", "set_value", "create_case", {"value": "0001"})
+    n1["out_aliases"] = {"value": "casenumber"}
+    g6 = {
+        "nodes": [
+            n1,
+            node("n2", "python_eval", "use",
+                 {"expression": "casenumber"},
+                 assert_="last['value'] == '0001'"),
+            node("n3", "assert_equals", "tmpl",
+                 {"actual": "{{ casenumber }}", "expected": "0001"}),
+        ],
+        "links": [["n1", "n2"], ["n2", "n3"]],
+    }
+    eid, status, err = engine.execute(fid, "t1b", g6)
+    check("output alias usable as bare var", status == "passed", str(err))
+
+    # ---- environments: CRUD + variable injection ----
+    envid = db.create_environment(
+        "staging", {"base_url": "https://stg.example.com", "token": "abc"})
+    check("env create/list",
+          db.list_environments()[0]["name"] == "staging")
+    check("env get by name",
+          db.get_environment_by_name("staging")["vars"]["token"] == "abc")
+    g7 = {
+        "nodes": [
+            node("n1", "set_value", "sv", {"value": "{{ base_url }}/login"},
+                 assert_="last['value'] == 'https://stg.example.com/login'"),
+            node("n2", "python_eval", "pe", {"expression": "env['token']"},
+                 assert_="last['value'] == 'abc'"),
+        ],
+        "links": [["n1", "n2"]],
+    }
+    eid, status, err = engine.execute(
+        fid, "t1b", g7, environment="staging",
+        env_vars=db.get_environment(envid)["vars"])
+    check("env vars injected into ctx", status == "passed", str(err))
+    check("execution records env name",
+          db.get_execution(eid)["environment"] == "staging")
+    db.update_environment(envid, vars_dict={"base_url": "x"})
+    check("env update",
+          db.get_environment(envid)["vars"] == {"base_url": "x"})
+    db.delete_environment(envid)
+    check("env delete", db.get_environment(envid) is None)
+
+    # ---- trigger nodes + listener ----
+    import time as _time
+    check("trigger nodes discovered",
+          getattr(registry.get("interval_trigger"), "is_trigger", False))
+
+    trig = node("t1", "interval_trigger", "every",
+                {"seconds": 0.1, "emit_immediately": True})
+    trig["out_aliases"] = {"tick": "tick"}
+    g8 = {
+        "nodes": [
+            trig,
+            node("n2", "python_eval", "use", {"expression": "tick"},
+                 assert_="last['value'] >= 1"),
+        ],
+        "links": [["t1", "n2"]],
+    }
+    # pressing Run on a trigger flow must be rejected
+    _, status, err = engine.execute(fid, "t1b", g8)
+    check("Run on trigger flow -> error", status == "error"
+          and "Listen" in (err or ""), str(err))
+
+    db.clear_executions()
+    flow = {"id": fid, "name": "t1b", "graph": g8}
+    lst = FlowListener(engine, flow)
+    lst.start()
+    _time.sleep(0.45)
+    lst.stop()
+    runs_at_stop = lst.runs
+    check("listener fired multiple runs", runs_at_stop >= 2,
+          f"runs={lst.runs}")
+    _time.sleep(0.25)
+    check("stop() really stops the trigger", lst.runs == runs_at_stop)
+    execs = db.list_executions()
+    check("triggered runs recorded + passed",
+          len(execs) == runs_at_stop
+          and all(e["status"] == "passed" for e in execs),
+          str([(e["status"], e["error"]) for e in execs]))
+    steps = db.get_steps(execs[0]["id"])
+    check("trigger recorded as first step",
+          steps[0]["node_type"] == "interval_trigger"
+          and steps[0]["status"] == "passed", str(steps))
+
+    # condition on the trigger filters events (only even ticks run)
+    db.clear_executions()
+    trig2 = dict(trig)
+    trig2["condition"] = "last['tick'] % 2 == 0"
+    g9 = {"nodes": [trig2, g8["nodes"][1]], "links": [["t1", "n2"]]}
+    lst2 = FlowListener(engine, {"id": fid, "name": "t1b", "graph": g9})
+    lst2.start()
+    _time.sleep(0.55)
+    lst2.stop()
+    check("condition filters trigger events",
+          lst2.filtered > 0 and lst2.runs > 0
+          and lst2.events == lst2.runs + lst2.filtered,
+          f"events={lst2.events} runs={lst2.runs} filtered={lst2.filtered}")
+
+    # listening on a non-trigger flow is rejected
+    lst3 = FlowListener(engine, {"id": fid, "name": "t1b", "graph": graph})
+    try:
+        lst3.start()
+        check("listen on non-trigger flow rejected", False, "no error")
+    except FlowValidationError:
+        check("listen on non-trigger flow rejected", True)
+
     # ---- executions are persisted ----
-    check("executions listed", len(db.list_executions()) >= 5)
+    check("executions listed", len(db.list_executions()) >= 1)
     db.clear_executions()
     check("clear executions", len(db.list_executions()) == 0)
 

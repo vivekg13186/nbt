@@ -92,8 +92,8 @@ Any failure stops the flow immediately and the execution is recorded as FAILED w
 Conditions, asserts and templates are Python expressions with safe builtins (`len`, `str`, `int`, `min`, `max`, `sorted`, ...). Available names:
 
 - `last` — outputs of the previous node (in the assert field: this node's outputs)
-- `<node name>` — outputs of any earlier node, e.g. `get_user['status']`
-- `ctx` — the whole context dict, useful when a node name isn't a valid identifier: `ctx['my node']['value']`
+- `<output alias>` — each declared output has an alias box on the node (in its `out` section); typing `casenumber` there publishes that output as a flat variable, so later nodes can write `casenumber` (or `{{ casenumber }}` / `ctx['casenumber']`)
+- `ctx` — the whole context dict; node outputs are also nested under auto-generated node names (e.g. `ctx['set_value_n1']`), but aliases are the recommended way to reference them
 
 Examples:
 
@@ -143,6 +143,40 @@ class JsonPath(BaseNode):
 - Heavy work is fine (runs happen on a background thread), but respect timeouts yourself (see `nodes/http_request.py`).
 - You can import anything you like (stdlib or installed packages) — node code is ordinary Python. Only the *expression fields* are restricted.
 - Test headless without the GUI: `python main.py --run "My Flow"` (exit code 0 = passed) — convenient for CI.
+
+## Trigger (listener) nodes
+
+Subclass `TriggerNode` instead of `BaseNode` to build a node that *emits events* rather than being executed. Trigger nodes must be the start node of a flow; the flow is armed with the **Listen** button, and every `emit(...)` call runs the rest of the chain with the emitted dict as the trigger's outputs.
+
+```python
+# nodes/my_trigger.py
+import threading, time
+from nbt.core.node_base import TriggerNode
+
+class Every5Min(TriggerNode):
+    type_name = "every_5_min"
+    label = "Every 5 Minutes"
+    category = "Triggers"
+    inputs = {"seconds": 300.0}
+    outputs = ["tick", "time"]
+
+    def start(self, emit, inputs, ctx):
+        # called once when Listen is pressed; must NOT block —
+        # do the watching on your own daemon thread
+        self._stop = threading.Event()
+        def loop():
+            n = 0
+            while not self._stop.wait(float(inputs["seconds"])):
+                n += 1
+                emit({"tick": n, "time": time.time()})
+        threading.Thread(target=loop, daemon=True).start()
+
+    def stop(self):
+        # called on Stop listening / flow switch / app close
+        self._stop.set()
+```
+
+Notes: `ctx` in `start()` contains the active environment's variables (and `{{ }}` templates in inputs are resolved against them). The node's *condition* field filters events — falsy means the event is silently dropped. Trigger nodes have no `assert` field and no input pin. Events that arrive while a previous triggered run is still executing are dropped, so a slow flow never piles up. See `nodes/interval_trigger.py` and `nodes/file_watch_trigger.py`.
 
 ## Bundled nodes to learn from
 

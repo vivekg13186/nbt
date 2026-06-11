@@ -139,9 +139,19 @@ class Engine:
         self.registry = registry
         self.db = db
 
-    def execute(self, flow_id, flow_name, graph):
-        """Run a flow graph. Returns (execution_id, status, error)."""
-        exec_id = self.db.create_execution(flow_id, flow_name)
+    def execute(self, flow_id, flow_name, graph, environment=None,
+                env_vars=None, trigger_outputs=None):
+        """Run a flow graph. Returns (execution_id, status, error).
+
+        `env_vars` (dict) are injected into the context before the first
+        node: available as `env['key']` and, for identifier-safe keys,
+        directly as `key` in expressions / `ctx['key']` in node code.
+
+        `trigger_outputs` is used by the listener runtime: the start node is
+        a trigger that already fired, so its outputs are seeded into the
+        context (aliases included) and execution begins at the second node.
+        """
+        exec_id = self.db.create_execution(flow_id, flow_name, environment)
         try:
             chain = build_chain(graph)
         except FlowValidationError as e:
@@ -149,6 +159,36 @@ class Engine:
             return exec_id, "error", str(e)
 
         ctx = {}
+        if env_vars:
+            ctx["env"] = dict(env_vars)
+            for k, v in env_vars.items():
+                if isinstance(k, str) and k not in ("last", "ctx", "env"):
+                    ctx[k] = v
+
+        if trigger_outputs is not None:
+            tnode = chain[0]
+            tname = _name(tnode)
+            outputs = (trigger_outputs if isinstance(trigger_outputs, dict)
+                       else {"value": trigger_outputs})
+            now = time.time()
+            self.db.add_step(
+                exec_id, tnode.get("id"), tname, tnode.get("type"), "passed",
+                None, _json({}), _json(outputs), now, now)
+            ctx[tname] = outputs
+            ctx["last"] = outputs
+            for oname, alias in (tnode.get("out_aliases") or {}).items():
+                alias = str(alias).strip()
+                if alias and alias != "last" and oname in outputs:
+                    ctx[alias] = outputs[oname]
+            chain = chain[1:]
+        else:
+            cls0 = self.registry.get(chain[0].get("type"))
+            if cls0 is not None and getattr(cls0, "is_trigger", False):
+                err = (f"start node '{_name(chain[0])}' is a trigger node - "
+                       "use Listen instead of Run to arm it")
+                self.db.finish_execution(exec_id, "error", err)
+                return exec_id, "error", err
+
         for node in chain:
             ok, fatal_error = self._execute_node(exec_id, node, ctx)
             if not ok:
@@ -226,5 +266,11 @@ class Engine:
 
         ctx[name] = outputs
         ctx["last"] = outputs
+        # publish aliased outputs as flat context variables,
+        # e.g. out_aliases {"value": "casenumber"} -> ctx["casenumber"]
+        for oname, alias in (node.get("out_aliases") or {}).items():
+            alias = str(alias).strip()
+            if alias and alias != "last" and oname in outputs:
+                ctx[alias] = outputs[oname]
         record("passed", None, inputs=inputs, outputs=outputs)
         return True, None

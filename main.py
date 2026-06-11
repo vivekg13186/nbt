@@ -1,12 +1,11 @@
 """NBT - Node Based Tester. Entry point.
 
-GUI:       python main.py
-Headless:  python main.py --run "Flow Name"     (exit code 0 = passed)
+Web UI:    python main.py [--port 8080]      then open http://localhost:8080
+Headless:  python main.py --run "Flow Name" [--env staging]   (exit 0 = pass)
            python main.py --list
 """
 
 import argparse
-import json
 import sys
 from pathlib import Path
 
@@ -21,17 +20,18 @@ DEMO_GRAPH = {
     "nodes": [
         {"id": "n1", "type": "set_value", "name": "greeting",
          "params": {"value": "hello"}, "condition": "", "assert": "",
-         "pos": [40, 120]},
+         "out_aliases": {"value": "greeting"}, "pos": [40, 120]},
         {"id": "n2", "type": "python_eval", "name": "upper",
-         "params": {"expression": "greeting['value'].upper()"},
+         "params": {"expression": "greeting.upper()"},
          "condition": "", "assert": "last['value'] == 'HELLO'",
-         "pos": [330, 120]},
+         "out_aliases": {"value": "upper"}, "pos": [330, 120]},
         {"id": "n3", "type": "delay", "name": "wait",
          "params": {"seconds": 2.0}, "condition": "1 == 2",  # skipped
-         "assert": "", "pos": [620, 120]},
+         "assert": "", "out_aliases": {}, "pos": [620, 120]},
         {"id": "n4", "type": "assert_equals", "name": "verify",
-         "params": {"actual": "{{ upper['value'] }}", "expected": "HELLO"},
-         "condition": "", "assert": "", "pos": [910, 120]},
+         "params": {"actual": "{{ upper }}", "expected": "HELLO"},
+         "condition": "", "assert": "", "out_aliases": {},
+         "pos": [910, 120]},
     ],
     "links": [["n1", "n2"], ["n2", "n3"], ["n3", "n4"]],
 }
@@ -48,7 +48,11 @@ def bootstrap(db_path=None):
 def main():
     ap = argparse.ArgumentParser(description="NBT - Node Based Tester")
     ap.add_argument("--db", help="path to sqlite database file")
+    ap.add_argument("--port", type=int, default=8080,
+                    help="web UI port (default 8080)")
     ap.add_argument("--run", metavar="FLOW", help="run a flow headless by name")
+    ap.add_argument("--env", metavar="ENV",
+                    help="environment name to run with (headless)")
     ap.add_argument("--list", action="store_true", help="list flows and exit")
     args = ap.parse_args()
 
@@ -64,9 +68,17 @@ def main():
         if flow is None:
             print(f"flow not found: {args.run!r}", file=sys.stderr)
             return 2
+        env_name, env_vars = None, None
+        if args.env:
+            env = db.get_environment_by_name(args.env)
+            if env is None:
+                print(f"environment not found: {args.env!r}", file=sys.stderr)
+                return 2
+            env_name, env_vars = env["name"], env["vars"]
         engine = Engine(registry, db)
         exec_id, status, error = engine.execute(
-            flow["id"], flow["name"], flow["graph"])
+            flow["id"], flow["name"], flow["graph"],
+            environment=env_name, env_vars=env_vars)
         print(f"execution {exec_id}: {status.upper()}")
         for st in db.get_steps(exec_id):
             line = f"  [{st['status']:>7}] {st['node_name']} ({st['node_type']})"
@@ -74,16 +86,22 @@ def main():
                 line += f"  outputs={st['outputs']}"
             print(line)
             if st["error"]:
-                print("           " +
-                      st["error"].splitlines()[0])
+                print("           " + st["error"].splitlines()[0])
         if error:
             print(f"error: {error}", file=sys.stderr)
         return 0 if status == "passed" else 1
 
-    from nbt.gui.app import App
-    App(db, registry).run()
-    return 0
+    # default: web UI. NOTE: NiceGUI re-executes this script when serving
+    # the first page, so the web branch must fall through without sys.exit.
+    from nicegui import ui                  # noqa: E402
+    from nbt.web.app import WebApp          # noqa: E402
+    WebApp(db, registry).build()
+    ui.run(title="NBT - Node Based Tester", port=args.port,
+           reload=False, show=False)
+    return None
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    _code = main()
+    if _code is not None:
+        sys.exit(_code)

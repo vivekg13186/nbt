@@ -1,1 +1,1 @@
-dearpygui>=1.10
+nicegui>=2.0
