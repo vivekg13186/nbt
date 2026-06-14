@@ -1,0 +1,279 @@
+html,
+body,
+#root {
+  height: 100%;
+  margin: 0;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    Helvetica, Arial, sans-serif;
+}
+
+.nbt-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
+  overflow: hidden;
+  background: var(--nbt-bg);
+  color: var(--nbt-fg);
+}
+
+/* keep Lucide SVG icons centered inside antd buttons / inline spans */
+.ant-btn .lucide,
+.ant-input-prefix .lucide {
+  vertical-align: middle;
+}
+.ant-btn > .lucide:only-child {
+  display: inline-block;
+}
+
+.nbt-body {
+  flex: 1;
+  display: flex;
+  min-height: 0;
+}
+
+.nbt-rail {
+  width: 56px;
+  flex: 0 0 56px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 8px 0;
+  gap: 4px;
+  border-right: 1px solid var(--nbt-border);
+  background: var(--nbt-panel);
+}
+
+.nbt-rail-btn {
+  width: 40px;
+  height: 40px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 18px;
+  color: var(--nbt-muted);
+  transition: background 0.15s, color 0.15s;
+}
+.nbt-rail-btn:hover {
+  background: var(--nbt-hover);
+}
+.nbt-rail-btn.active {
+  background: var(--nbt-active);
+  color: var(--nbt-primary);
+}
+
+.nbt-sidebar {
+  width: 260px;
+  flex: 0 0 260px;
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--nbt-border);
+  min-height: 0;
+  background: var(--nbt-panel);
+}
+.nbt-sidebar-head {
+  padding: 8px 10px;
+}
+.nbt-sidebar-list {
+  flex: 1;
+  overflow-y: auto;
+  padding: 0 6px 8px;
+}
+
+.nbt-main {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+}
+
+.nbt-canvas-wrap {
+  flex: 1;
+  position: relative;
+  min-height: 0;
+  overflow: hidden;
+}
+.nbt-canvas-wrap canvas {
+  display: block;
+}
+
+.nbt-terminal {
+  border-top: 1px solid var(--nbt-border);
+  height: 280px;
+  display: flex;
+  flex-direction: column;
+}
+.nbt-terminal-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 10px;
+  border-bottom: 1px solid var(--nbt-border);
+  font-size: 12px;
+}
+.nbt-terminal-body {
+  flex: 1;
+  overflow: hidden;
+  padding: 6px 8px;
+  background: #0c0c0c; /* dark terminal */
+  min-height: 0;
+}
+.nbt-xterm-host {
+  width: 100%;
+  height: 100%;
+}
+.nbt-log-ok {
+  color: #52c41a;
+}
+.nbt-log-error {
+  color: #ff4d4f;
+}
+.nbt-log-info {
+  color: var(--nbt-muted);
+}
+.nbt-log-ts {
+  opacity: 0.5;
+  margin-right: 8px;
+}
+
+.nbt-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--nbt-border);
+}
+
+.nbt-editor-pane {
+  flex: 1;
+  overflow: auto;
+  padding: 16px;
+}
+
+.nbt-empty {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--nbt-muted);
+}
+
+/* drag-and-drop JSON import overlay */
+.nbt-dropzone {
+  position: fixed;
+  inset: 0;
+  z-index: 2000;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  pointer-events: none; /* let the drop land on the shell underneath */
+}
+.nbt-dropzone-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  color: var(--nbt-fg);
+  padding: 48px 64px;
+  border: 2px dashed var(--nbt-muted);
+  border-radius: 16px;
+  background: var(--nbt-panel);
+}
+
+/* ------------------------------------------------------------------ *
+ * LiteGraph popup overrides (context menu, value dialog, search box).
+ * These are appended to <body>, so they are themed via tokens on :root
+ * / body.nbt-dark rather than the in-tree .nbt-dark scope.
+ * ------------------------------------------------------------------ */
+.litegraph.litecontextmenu {
+  background: var(--nbt-panel) !important;
+  border: 1px solid var(--nbt-border) !important;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25) !important;
+  border-radius: 8px !important;
+  overflow: hidden;
+  z-index: 1000;
+  font-family: inherit !important;
+}
+.litegraph.litecontextmenu .litemenu-entry,
+.litegraph.litecontextmenu .litemenu-title {
+  color: var(--nbt-fg) !important;
+  padding: 5px 14px !important;
+  font-size: 13px !important;
+}
+.litegraph.litecontextmenu .litemenu-entry:hover {
+  background: var(--nbt-active) !important;
+  color: var(--nbt-fg) !important;
+}
+.litegraph.litecontextmenu .litemenu-entry.separator {
+  background: var(--nbt-border) !important;
+}
+
+.graphdialog {
+  background: var(--nbt-panel) !important;
+  color: var(--nbt-fg) !important;
+  border: 1px solid var(--nbt-border) !important;
+  border-radius: 8px !important;
+  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25) !important;
+  padding: 6px 8px !important;
+  font-family: inherit !important;
+  z-index: 1001;
+}
+.graphdialog .name {
+  color: var(--nbt-muted) !important;
+  font-size: 12px !important;
+}
+.graphdialog input,
+.graphdialog textarea,
+.graphdialog select {
+  background: var(--nbt-bg) !important;
+  color: var(--nbt-fg) !important;
+  border: 1px solid var(--nbt-border) !important;
+  border-radius: 6px !important;
+  padding: 4px 8px !important;
+  outline: none;
+}
+.graphdialog input:focus,
+.graphdialog textarea:focus {
+  border-color: var(--nbt-primary) !important;
+}
+.graphdialog button {
+  background: var(--nbt-active) !important;
+  color: var(--nbt-fg) !important;
+  border: 1px solid var(--nbt-border) !important;
+  border-radius: 6px !important;
+  padding: 4px 12px !important;
+  margin-left: 6px;
+  cursor: pointer;
+}
+.litegraph.litesearchbox .helper .lite-search-item {
+  color: var(--nbt-fg) !important;
+}
+.litegraph.litesearchbox .helper .lite-search-item:hover,
+.litegraph.litesearchbox .helper .lite-search-item.selected {
+  background: var(--nbt-active) !important;
+  color: var(--nbt-fg) !important;
+}
+
+/* theme tokens */
+:root {
+  --nbt-bg: #ffffff;
+  --nbt-panel: #fafafa;
+  --nbt-fg: rgba(0, 0, 0, 0.88);
+  --nbt-border: #f0f0f0;
+  --nbt-hover: #f5f5f5;
+  --nbt-active: #eaeaea;
+  --nbt-muted: #8c8c8c;
+  --nbt-primary: #404040;
+}
+.nbt-dark {
+  --nbt-bg: #141414;
+  --nbt-panel: #1d1d1d;
+  --nbt-fg: rgba(255, 255, 255, 0.85);
+  --nbt-border: #303030;
+  --nbt-hover: #1f1f1f;
+  --nbt-active: #2f2f2f;
+  --nbt-muted: #8c8c8c;
+  --nbt-primary: #d0d0d0;
+}

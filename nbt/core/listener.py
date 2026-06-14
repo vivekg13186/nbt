@@ -3,14 +3,14 @@
 A flow whose start node is a TriggerNode is not Run - it is *listened to*.
 FlowListener arms the trigger (cls.start) and, for every emitted event,
 executes the rest of the flow with the trigger's outputs seeded into the
-context. The trigger node's `condition` field filters events (falsy ->
+context. The trigger node's `pre` field filters events (falsy ->
 event ignored, no execution recorded). Overlapping events are dropped while
 a run is still in progress (counted in `skipped_busy`).
 """
 
 import threading
 
-from .engine import (FlowValidationError, _name, build_chain, resolve_value,
+from .engine import (FlowValidationError, _name, build_dag, resolve_value,
                      safe_eval)
 
 
@@ -26,7 +26,7 @@ class FlowListener:
         self.active = False
         self.events = 0          # events emitted by the trigger
         self.runs = 0            # executions actually started
-        self.filtered = 0        # events dropped by the condition filter
+        self.filtered = 0        # events dropped by the pre filter
         self.skipped_busy = 0    # events dropped because a run was ongoing
         self.last_result = None  # (exec_id, status, error) of latest run
 
@@ -44,17 +44,26 @@ class FlowListener:
         return ctx
 
     def start(self):
-        """Validate the flow and arm the trigger. Raises on bad flows."""
-        chain = build_chain(self.flow["graph"])
-        self._tnode = chain[0]
-        cls = self.engine.registry.get(self._tnode.get("type"))
-        if cls is None:
+        """Validate the flow and arm its trigger. Raises on bad flows.
+
+        The trigger node may be standalone (no outgoing connection) or the
+        root of a subgraph. Exactly one trigger node is supported per flow.
+        """
+        nodes, order, _parents, _children = build_dag(self.flow["graph"])
+        triggers = []
+        for nid in order:
+            cls = self.engine.registry.get(nodes[nid].get("type"))
+            if cls is not None and getattr(cls, "is_trigger", False):
+                triggers.append((nodes[nid], cls))
+        if not triggers:
             raise FlowValidationError(
-                f"unknown node type '{self._tnode.get('type')}'")
-        if not getattr(cls, "is_trigger", False):
+                "flow has no trigger node to listen to (use Run instead)")
+        if len(triggers) > 1:
+            names = ", ".join(_name(t) for t, _ in triggers)
             raise FlowValidationError(
-                f"start node '{_name(self._tnode)}' is not a trigger node - "
-                "nothing to listen to (use Run instead)")
+                f"flow has multiple trigger nodes ({names}); keep exactly "
+                "one to Listen")
+        self._tnode, cls = triggers[0]
 
         ctx = self._env_ctx()
         inputs = {}
@@ -76,7 +85,7 @@ class FlowListener:
         self.events += 1
         outputs = outputs if isinstance(outputs, dict) else {"value": outputs}
 
-        cond = (self._tnode.get("condition") or "").strip()
+        cond = (self._tnode.get("pre") or self._tnode.get("condition") or "").strip()
         if cond:
             cctx = self._env_ctx()
             cctx[_name(self._tnode)] = outputs
@@ -97,7 +106,7 @@ class FlowListener:
             self.last_result = self.engine.execute(
                 self.flow["id"], self.flow["name"], self.flow["graph"],
                 environment=self.environment, env_vars=self.env_vars,
-                trigger_outputs=outputs)
+                trigger_node=self._tnode, trigger_outputs=outputs)
         finally:
             self._busy.release()
 

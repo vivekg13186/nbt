@@ -1,0 +1,514 @@
+"""FastAPI app exposing NBT flows, environments, executions and listeners.
+
+The app is intentionally thin: every endpoint delegates to the same
+``Database`` / ``Engine`` / ``NodeRegistry`` / ``FlowListener`` objects the
+NiceGUI UI uses, so both front-ends stay in sync. Run it with::
+
+    python api_server.py --port 8000
+
+and point the Vite dev server (webui/) at it.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import json
+import threading
+import time
+from collections import deque
+from typing import Any, Optional
+
+from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.concurrency import run_in_threadpool
+from pydantic import BaseModel
+
+from ..core.listener import FlowListener
+from ..core.engine import Engine
+
+
+# --------------------------------------------------------------------------
+# Log bus: collects human-readable run/listener lines and fans them out to
+# any connected WebSocket clients (the bottom "terminal" console).
+# --------------------------------------------------------------------------
+class LogBus:
+    def __init__(self, history: int = 500):
+        self._history: deque[dict] = deque(maxlen=history)
+        self._subs: set[asyncio.Queue] = set()
+        self._loop: Optional[asyncio.AbstractEventLoop] = None
+        self._lock = threading.Lock()
+
+    def bind_loop(self, loop: asyncio.AbstractEventLoop) -> None:
+        self._loop = loop
+
+    def emit(self, text: str, level: str = "info") -> None:
+        """Thread-safe. Callable from listener threads or request handlers."""
+        line = {"ts": time.time(), "level": level, "text": text}
+        with self._lock:
+            self._history.append(line)
+            subs = list(self._subs)
+        loop = self._loop
+        for q in subs:
+            if loop is not None:
+                loop.call_soon_threadsafe(q.put_nowait, line)
+
+    def history(self) -> list[dict]:
+        with self._lock:
+            return list(self._history)
+
+    def subscribe(self) -> asyncio.Queue:
+        q: asyncio.Queue = asyncio.Queue()
+        with self._lock:
+            self._subs.add(q)
+        return q
+
+    def unsubscribe(self, q: asyncio.Queue) -> None:
+        with self._lock:
+            self._subs.discard(q)
+
+
+# --------------------------------------------------------------------------
+# Listener manager: one FlowListener per flow_id, mirroring WebApp.listeners.
+# --------------------------------------------------------------------------
+class ListenerManager:
+    def __init__(self, engine: Engine, logbus: LogBus):
+        self.engine = engine
+        self.logbus = logbus
+        self.listeners: dict[str, FlowListener] = {}
+        self._lock = threading.Lock()
+
+    def start(self, flow: dict, env_name=None, env_vars=None) -> FlowListener:
+        fid = flow["id"]
+        with self._lock:
+            if fid in self.listeners:
+                raise ValueError("flow is already listening")
+
+            def _done(lst: FlowListener):
+                res = lst.last_result or (None, "?", None)
+                exec_id, status, _ = res
+                self.logbus.emit(
+                    f"[listen] {flow['name']}: event -> {status} "
+                    f"(exec {exec_id})",
+                    level="ok" if status == "passed" else "error")
+
+            listener = FlowListener(self.engine, flow, env_name, env_vars,
+                                    on_run_done=_done)
+            listener.start()  # raises on invalid flow
+            self.listeners[fid] = listener
+            self.logbus.emit(f"[listen] armed '{flow['name']}'", level="ok")
+            return listener
+
+    def stop(self, flow_id: str) -> bool:
+        with self._lock:
+            lst = self.listeners.pop(flow_id, None)
+        if lst is None:
+            return False
+        lst.stop()
+        self.logbus.emit(f"[listen] stopped '{lst.flow['name']}'")
+        return True
+
+    def stop_all(self) -> int:
+        with self._lock:
+            items = list(self.listeners.items())
+            self.listeners.clear()
+        for _, lst in items:
+            lst.stop()
+        if items:
+            self.logbus.emit(f"[listen] stopped all ({len(items)})")
+        return len(items)
+
+    def stats(self) -> list[dict]:
+        with self._lock:
+            items = list(self.listeners.items())
+        out = []
+        for fid, lst in items:
+            res = lst.last_result
+            out.append({
+                "flow_id": fid,
+                "flow_name": lst.flow["name"],
+                "environment": lst.environment,
+                "active": lst.active,
+                "events": lst.events,
+                "runs": lst.runs,
+                "filtered": lst.filtered,
+                "skipped_busy": lst.skipped_busy,
+                "last_status": res[1] if res else None,
+                "last_exec_id": res[0] if res else None,
+            })
+        return sorted(out, key=lambda r: r["flow_name"].lower())
+
+
+# --------------------------------------------------------------------------
+# Node metadata (same shape WebApp.node_metas produces for LiteGraph).
+# --------------------------------------------------------------------------
+def node_metas(registry) -> list[dict]:
+    metas = []
+    for tname, cls in sorted(registry.types.items()):
+        params = []
+        for p, d in cls.inputs.items():
+            if isinstance(d, bool):
+                kind = "bool"
+            elif isinstance(d, int):
+                kind = "int"
+            elif isinstance(d, float):
+                kind = "float"
+            else:
+                kind = "text"
+            params.append({"name": p, "default": d, "kind": kind})
+        metas.append({
+            "type": tname, "label": cls.label,
+            "category": cls.category or "General", "params": params,
+            "outputs": list(cls.outputs),
+            "is_trigger": bool(getattr(cls, "is_trigger", False)),
+        })
+    return metas
+
+
+# --------------------------------------------------------------------------
+# Request bodies
+# --------------------------------------------------------------------------
+class FlowCreate(BaseModel):
+    name: str
+    graph: Optional[dict] = None
+
+
+class FlowPatch(BaseModel):
+    name: Optional[str] = None
+    graph: Optional[dict] = None
+
+
+class DuplicateBody(BaseModel):
+    name: str
+
+
+class EnvBody(BaseModel):
+    name: str
+    vars: dict[str, Any] = {}
+
+
+class EnvPatch(BaseModel):
+    name: Optional[str] = None
+    vars: Optional[dict[str, Any]] = None
+
+
+class RunBody(BaseModel):
+    environment: Optional[str] = None
+
+
+# --------------------------------------------------------------------------
+# App factory
+# --------------------------------------------------------------------------
+def create_app(db, registry) -> FastAPI:
+    engine = Engine(registry, db)
+    logbus = LogBus()
+    listeners = ListenerManager(engine, logbus)
+
+    app = FastAPI(title="NBT API", version="1.0")
+    app.add_middleware(
+        CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    @app.on_event("startup")
+    async def _bind():
+        logbus.bind_loop(asyncio.get_running_loop())
+
+    def _env_lookup(name):
+        """Return (env_name, env_vars) or (None, None); 404 if name unknown."""
+        if not name:
+            return None, None
+        env = db.get_environment_by_name(name)
+        if env is None:
+            raise HTTPException(404, f"environment not found: {name!r}")
+        return env["name"], env["vars"]
+
+    # ---------------- meta ----------------
+    @app.get("/api/health")
+    def health():
+        return {"ok": True, "nodes": len(registry.types),
+                "load_errors": registry.errors}
+
+    @app.get("/api/nodes")
+    def nodes():
+        return {"nodes": node_metas(registry),
+                "load_errors": [{"file": f, "error": e}
+                                for f, e in registry.errors]}
+
+    # ---------------- flows ----------------
+    @app.get("/api/flows")
+    def list_flows():
+        return db.list_flows()
+
+    @app.get("/api/flows/{flow_id}")
+    def get_flow(flow_id: str):
+        flow = db.get_flow(flow_id)
+        if flow is None:
+            raise HTTPException(404, "flow not found")
+        flow["listening"] = flow_id in listeners.listeners
+        return flow
+
+    @app.post("/api/flows")
+    def create_flow(body: FlowCreate):
+        name = body.name.strip()
+        if not name:
+            raise HTTPException(400, "name required")
+        if db.get_flow_by_name(name):
+            raise HTTPException(409, "a flow with that name already exists")
+        fid = db.create_flow(name, body.graph)
+        logbus.emit(f"[flow] created '{name}'")
+        return db.get_flow(fid)
+
+    @app.patch("/api/flows/{flow_id}")
+    def patch_flow(flow_id: str, body: FlowPatch):
+        flow = db.get_flow(flow_id)
+        if flow is None:
+            raise HTTPException(404, "flow not found")
+        if body.name is not None:
+            new = body.name.strip()
+            if not new:
+                raise HTTPException(400, "name cannot be empty")
+            other = db.get_flow_by_name(new)
+            if other and other["id"] != flow_id:
+                raise HTTPException(409, "name already in use")
+            db.rename_flow(flow_id, new)
+            lst = listeners.listeners.get(flow_id)
+            if lst is not None:
+                lst.flow["name"] = new
+        if body.graph is not None:
+            db.save_graph(flow_id, body.graph)
+        return db.get_flow(flow_id)
+
+    @app.post("/api/flows/{flow_id}/duplicate")
+    def duplicate_flow(flow_id: str, body: DuplicateBody):
+        if db.get_flow(flow_id) is None:
+            raise HTTPException(404, "flow not found")
+        name = body.name.strip()
+        if db.get_flow_by_name(name):
+            raise HTTPException(409, "a flow with that name already exists")
+        new_id = db.duplicate_flow(flow_id, name)
+        return db.get_flow(new_id)
+
+    @app.delete("/api/flows/{flow_id}")
+    def delete_flow(flow_id: str):
+        if db.get_flow(flow_id) is None:
+            raise HTTPException(404, "flow not found")
+        listeners.stop(flow_id)
+        db.delete_flow(flow_id)
+        return {"ok": True}
+
+    @app.post("/api/flows/{flow_id}/run")
+    async def run_flow(flow_id: str, body: RunBody):
+        flow = db.get_flow(flow_id)
+        if flow is None:
+            raise HTTPException(404, "flow not found")
+        env_name, env_vars = _env_lookup(body.environment)
+        logbus.emit(f"[run] '{flow['name']}'"
+                    + (f" (env {env_name})" if env_name else ""))
+        exec_id, status, error = await run_in_threadpool(
+            engine.execute, flow["id"], flow["name"], flow["graph"],
+            env_name, env_vars)
+        for st in db.get_steps(exec_id):
+            line = f"  [{st['status']:>7}] {st['node_name']} ({st['node_type']})"
+            logbus.emit(line,
+                        level={"passed": "ok", "failed": "error"}.get(
+                            st["status"], "info"))
+            if st["error"]:
+                logbus.emit("           " + st["error"].splitlines()[0],
+                            level="error")
+        logbus.emit(f"[run] {flow['name']}: {status.upper()}",
+                    level="ok" if status == "passed" else "error")
+        return {"execution_id": exec_id, "status": status, "error": error}
+
+    # ---------------- environments ----------------
+    @app.get("/api/environments")
+    def list_envs():
+        return db.list_environments()
+
+    @app.post("/api/environments")
+    def create_env(body: EnvBody):
+        name = body.name.strip()
+        if not name:
+            raise HTTPException(400, "name required")
+        if db.get_environment_by_name(name):
+            raise HTTPException(409, "environment name already in use")
+        eid = db.create_environment(name, body.vars)
+        return db.get_environment(eid)
+
+    @app.patch("/api/environments/{env_id}")
+    def patch_env(env_id: str, body: EnvPatch):
+        env = db.get_environment(env_id)
+        if env is None:
+            raise HTTPException(404, "environment not found")
+        if body.name is not None:
+            other = db.get_environment_by_name(body.name.strip())
+            if other and other["id"] != env_id:
+                raise HTTPException(409, "name already in use")
+        db.update_environment(
+            env_id,
+            name=body.name.strip() if body.name is not None else None,
+            vars_dict=body.vars)
+        return db.get_environment(env_id)
+
+    @app.delete("/api/environments/{env_id}")
+    def delete_env(env_id: str):
+        if db.get_environment(env_id) is None:
+            raise HTTPException(404, "environment not found")
+        db.delete_environment(env_id)
+        return {"ok": True}
+
+    # ---------------- executions ----------------
+    @app.get("/api/executions")
+    def list_execs(limit: int = 200):
+        return db.list_executions(limit)
+
+    @app.get("/api/executions/{exec_id}")
+    def get_exec(exec_id: str):
+        ex = db.get_execution(exec_id)
+        if ex is None:
+            raise HTTPException(404, "execution not found")
+        ex["steps"] = db.get_steps(exec_id)
+        return ex
+
+    @app.delete("/api/executions")
+    def clear_execs():
+        db.clear_executions()
+        return {"ok": True}
+
+    # ---------------- listeners ----------------
+    @app.get("/api/listeners")
+    def get_listeners():
+        return listeners.stats()
+
+    @app.post("/api/flows/{flow_id}/listen")
+    def start_listen(flow_id: str, body: RunBody):
+        flow = db.get_flow(flow_id)
+        if flow is None:
+            raise HTTPException(404, "flow not found")
+        env_name, env_vars = _env_lookup(body.environment)
+        try:
+            listeners.start(flow, env_name, env_vars)
+        except Exception as ex:  # validation / start failure
+            raise HTTPException(400, str(ex))
+        return {"ok": True, "listeners": listeners.stats()}
+
+    @app.delete("/api/listeners/{flow_id}")
+    def stop_listen(flow_id: str):
+        if not listeners.stop(flow_id):
+            raise HTTPException(404, "flow is not listening")
+        return {"ok": True, "listeners": listeners.stats()}
+
+    @app.delete("/api/listeners")
+    def stop_all_listen():
+        n = listeners.stop_all()
+        return {"ok": True, "stopped": n}
+
+    # ---------------- log stream ----------------
+    @app.websocket("/api/logs")
+    async def logs_ws(ws: WebSocket):
+        await ws.accept()
+        for line in logbus.history():
+            await ws.send_json(line)
+        q = logbus.subscribe()
+        try:
+            while True:
+                line = await q.get()
+                await ws.send_json(line)
+        except WebSocketDisconnect:
+            pass
+        finally:
+            logbus.unsubscribe(q)
+
+    # ---------------- interactive shell (PTY) ----------------
+    @app.websocket("/api/shell")
+    async def shell_ws(ws: WebSocket):
+        await ws.accept()
+        await _serve_shell(ws)
+
+    return app
+
+
+async def _serve_shell(ws: WebSocket):
+    """Bridge a WebSocket to a PTY-backed login shell.
+
+    Protocol: client sends keystrokes as binary frames and control messages
+    (window resize) as JSON text frames, e.g. {"resize": [cols, rows]}.
+    The shell's output is streamed back as binary frames. Unix only.
+    """
+    try:
+        import os
+        import pty
+        import signal
+        import struct
+        import fcntl
+        import termios
+    except ImportError:  # pragma: no cover - non-Unix
+        await ws.send_text("Interactive shell is only supported on Unix "
+                           "hosts.\r\n")
+        await ws.close()
+        return
+
+    shell = os.environ.get("SHELL") or "/bin/bash"
+    pid, master_fd = pty.fork()
+    if pid == 0:  # child -> become the shell
+        os.environ["TERM"] = "xterm-256color"
+        try:
+            os.execvp(shell, [shell, "-i"])
+        except Exception:
+            os._exit(1)
+
+    loop = asyncio.get_running_loop()
+    out_q: asyncio.Queue = asyncio.Queue()
+
+    def _on_readable():
+        try:
+            data = os.read(master_fd, 65536)
+        except OSError:
+            data = b""
+        out_q.put_nowait(data or None)  # None => EOF
+
+    loop.add_reader(master_fd, _on_readable)
+
+    async def _pump_out():
+        while True:
+            data = await out_q.get()
+            if data is None:
+                break
+            try:
+                await ws.send_bytes(data)
+            except Exception:
+                break
+
+    out_task = asyncio.create_task(_pump_out())
+    try:
+        while True:
+            msg = await ws.receive()
+            if msg.get("type") == "websocket.disconnect":
+                break
+            if msg.get("bytes") is not None:
+                os.write(master_fd, msg["bytes"])
+            elif msg.get("text") is not None:
+                text = msg["text"]
+                try:
+                    ctrl = json.loads(text)
+                    cols, rows = ctrl["resize"]
+                    winsize = struct.pack("HHHH", int(rows), int(cols), 0, 0)
+                    fcntl.ioctl(master_fd, termios.TIOCSWINSZ, winsize)
+                except Exception:
+                    os.write(master_fd, text.encode())
+    except WebSocketDisconnect:
+        pass
+    finally:
+        try:
+            loop.remove_reader(master_fd)
+        except Exception:
+            pass
+        out_task.cancel()
+        try:
+            os.close(master_fd)
+        except OSError:
+            pass
+        try:
+            os.kill(pid, signal.SIGKILL)
+            os.waitpid(pid, 0)
+        except Exception:
+            pass

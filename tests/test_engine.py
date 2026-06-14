@@ -10,7 +10,7 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT))
 
-from nbt.core.engine import Engine, build_chain, FlowValidationError  # noqa
+from nbt.core.engine import Engine, build_dag, FlowValidationError  # noqa
 from nbt.core.listener import FlowListener                            # noqa
 from nbt.core.registry import NodeRegistry                            # noqa
 from nbt.db.database import Database                                  # noqa
@@ -28,10 +28,10 @@ def check(name, cond, info=""):
         print(f"  FAIL  {name}  {info}")
 
 
-def node(nid, ntype, name=None, params=None, condition="", assert_=""):
+def node(nid, ntype, name=None, params=None, pre="", post=""):
     return {"id": nid, "type": ntype, "name": name or nid,
-            "params": params or {}, "condition": condition,
-            "assert": assert_, "pos": [0, 0]}
+            "params": params or {}, "pre": pre,
+            "post": post, "pos": [0, 0]}
 
 
 def main():
@@ -55,31 +55,46 @@ def main():
     db.delete_flow(fid2)
     check("delete flow", db.get_flow(fid2) is None)
 
-    # ---- validation ----
+    # ---- DAG validation ----
     def expect_invalid(name, graph):
         try:
-            build_chain(graph)
+            build_dag(graph)
             check(name, False, "no error raised")
         except FlowValidationError:
             check(name, True)
 
+    def expect_valid(name, graph):
+        try:
+            build_dag(graph)
+            check(name, True)
+        except FlowValidationError as e:
+            check(name, False, str(e))
+
     expect_invalid("empty flow rejected", {"nodes": [], "links": []})
-    expect_invalid("two start nodes rejected", {
-        "nodes": [node("a", "set_value"), node("b", "set_value"),
-                  node("c", "set_value")],
-        "links": [["a", "c"]]})
-    expect_invalid("branching rejected", {
-        "nodes": [node("a", "set_value"), node("b", "set_value"),
-                  node("c", "set_value")],
-        "links": [["a", "b"], ["a", "c"]]})
     expect_invalid("cycle rejected", {
         "nodes": [node("a", "set_value"), node("b", "set_value")],
         "links": [["a", "b"], ["b", "a"]]})
+    # DAG model: these were rejected by the old linear engine, now allowed
+    expect_valid("multiple roots allowed", {
+        "nodes": [node("a", "set_value"), node("b", "set_value"),
+                  node("c", "set_value")],
+        "links": [["a", "c"]]})
+    expect_valid("branching allowed", {
+        "nodes": [node("a", "set_value"), node("b", "set_value"),
+                  node("c", "set_value")],
+        "links": [["a", "b"], ["a", "c"]]})
+    expect_valid("join (multiple parents) allowed", {
+        "nodes": [node("a", "set_value"), node("b", "set_value"),
+                  node("c", "set_value")],
+        "links": [["a", "c"], ["b", "c"]]})
+    expect_valid("disconnected subgraphs allowed", {
+        "nodes": [node("a", "set_value"), node("b", "set_value")],
+        "links": []})
 
-    chain = build_chain({
+    _nodes, order, _parents, _children = build_dag({
         "nodes": [node("b", "set_value"), node("a", "set_value")],
         "links": [["a", "b"]]})
-    check("chain ordered from start", [n["id"] for n in chain] == ["a", "b"])
+    check("topological order from root", order == ["a", "b"])
 
     # ---- passing flow with templating + condition skip + assert expr ----
     graph = {
@@ -87,8 +102,8 @@ def main():
             node("n1", "set_value", "greeting", {"value": "hello"}),
             node("n2", "python_eval", "upper",
                  {"expression": "greeting['value'].upper()"},
-                 assert_="last['value'] == 'HELLO'"),
-            node("n3", "delay", "wait", {"seconds": 5.0}, condition="1 == 2"),
+                 post="last['value'] == 'HELLO'"),
+            node("n3", "delay", "wait", {"seconds": 5.0}, pre="1 == 2"),
             node("n4", "assert_equals", "verify",
                  {"actual": "{{ upper['value'] }}", "expected": "HELLO"}),
         ],
@@ -109,7 +124,7 @@ def main():
         "nodes": [
             node("n1", "set_value", "v", {"value": "x"}),
             node("n2", "python_eval", "calc", {"expression": "2 + 2"},
-                 assert_="last['value'] == 5"),
+                 post="last['value'] == 5"),
             node("n3", "set_value", "never", {"value": "y"}),
         ],
         "links": [["n1", "n2"], ["n2", "n3"]],
@@ -135,7 +150,7 @@ def main():
 
     # ---- bad condition expression fails ----
     g4 = {"nodes": [node("n1", "set_value", "v", {"value": "a"},
-                         condition="nope['x']")], "links": []}
+                         pre="nope['x']")], "links": []}
     _, status, err = engine.execute(fid, "t1b", g4)
     check("broken condition fails flow", status == "failed", str(err))
 
@@ -156,7 +171,7 @@ def main():
             n1,
             node("n2", "python_eval", "use",
                  {"expression": "casenumber"},
-                 assert_="last['value'] == '0001'"),
+                 post="last['value'] == '0001'"),
             node("n3", "assert_equals", "tmpl",
                  {"actual": "{{ casenumber }}", "expected": "0001"}),
         ],
@@ -175,9 +190,9 @@ def main():
     g7 = {
         "nodes": [
             node("n1", "set_value", "sv", {"value": "{{ base_url }}/login"},
-                 assert_="last['value'] == 'https://stg.example.com/login'"),
+                 post="last['value'] == 'https://stg.example.com/login'"),
             node("n2", "python_eval", "pe", {"expression": "env['token']"},
-                 assert_="last['value'] == 'abc'"),
+                 post="last['value'] == 'abc'"),
         ],
         "links": [["n1", "n2"]],
     }
@@ -205,7 +220,7 @@ def main():
         "nodes": [
             trig,
             node("n2", "python_eval", "use", {"expression": "tick"},
-                 assert_="last['value'] >= 1"),
+                 post="last['value'] >= 1"),
         ],
         "links": [["t1", "n2"]],
     }
@@ -238,7 +253,7 @@ def main():
     # condition on the trigger filters events (only even ticks run)
     db.clear_executions()
     trig2 = dict(trig)
-    trig2["condition"] = "last['tick'] % 2 == 0"
+    trig2["pre"] = "last['tick'] % 2 == 0"
     g9 = {"nodes": [trig2, g8["nodes"][1]], "links": [["t1", "n2"]]}
     lst2 = FlowListener(engine, {"id": fid, "name": "t1b", "graph": g9})
     lst2.start()
@@ -256,6 +271,23 @@ def main():
         check("listen on non-trigger flow rejected", False, "no error")
     except FlowValidationError:
         check("listen on non-trigger flow rejected", True)
+
+    # a standalone trigger (no outgoing connection) still arms and records
+    db.clear_executions()
+    g_standalone = {"nodes": [dict(trig)], "links": []}
+    lst4 = FlowListener(engine, {"id": fid, "name": "t1b",
+                                 "graph": g_standalone})
+    lst4.start()
+    _time.sleep(0.35)
+    lst4.stop()
+    check("standalone trigger (no connection) runs", lst4.runs >= 2,
+          f"runs={lst4.runs}")
+    execs = db.list_executions()
+    check("standalone trigger records trigger-only step",
+          len(execs) >= 1
+          and len(db.get_steps(execs[0]["id"])) == 1
+          and all(e["status"] == "passed" for e in execs),
+          str([(e["status"], e["error"]) for e in execs]))
 
     # ---- executions are persisted ----
     check("executions listed", len(db.list_executions()) >= 1)

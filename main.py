@@ -19,18 +19,18 @@ from nbt.db.database import Database                # noqa: E402
 DEMO_GRAPH = {
     "nodes": [
         {"id": "n1", "type": "set_value", "name": "greeting",
-         "params": {"value": "hello"}, "condition": "", "assert": "",
+         "params": {"value": "hello"}, "pre": "", "post": "",
          "out_aliases": {"value": "greeting"}, "pos": [40, 120]},
         {"id": "n2", "type": "python_eval", "name": "upper",
          "params": {"expression": "greeting.upper()"},
-         "condition": "", "assert": "last['value'] == 'HELLO'",
+         "pre": "", "post": "last['value'] == 'HELLO'",
          "out_aliases": {"value": "upper"}, "pos": [330, 120]},
         {"id": "n3", "type": "delay", "name": "wait",
-         "params": {"seconds": 2.0}, "condition": "1 == 2",  # skipped
-         "assert": "", "out_aliases": {}, "pos": [620, 120]},
+         "params": {"seconds": 2.0}, "pre": "1 == 2",  # skipped
+         "post": "", "out_aliases": {}, "pos": [620, 120]},
         {"id": "n4", "type": "assert_equals", "name": "verify",
          "params": {"actual": "{{ upper }}", "expected": "HELLO"},
-         "condition": "", "assert": "", "out_aliases": {},
+         "pre": "", "post": "", "out_aliases": {},
          "pos": [910, 120]},
     ],
     "links": [["n1", "n2"], ["n2", "n3"], ["n3", "n4"]],
@@ -91,14 +91,12 @@ def main():
             print(f"error: {error}", file=sys.stderr)
         return 0 if status == "passed" else 1
 
-    # default: web UI. NOTE: NiceGUI re-executes this script when serving
-    # the first page, so the web branch must fall through without sys.exit.
-    from nicegui import ui                  # noqa: E402
-    from nbt.web.app import WebApp          # noqa: E402
-    WebApp(db, registry).build()
-    ui.run(title="NBT - Node Based Tester", port=args.port,
-           reload=False, show=False)
-    return None
+    # No CLI action: the UI now lives in the React app served by the API.
+    print("NBT CLI. The web UI is served by the API server:\n"
+          "    python api_server.py        # http://localhost:8000\n"
+          "Headless options: --run \"Flow Name\" [--env NAME] | --list",
+          file=sys.stderr)
+    return 0
 
 
 if __name__ == "__main__":

@@ -25,7 +25,7 @@ class StringLength(BaseNode):
 |---|---|---|
 | `type_name` | yes | Unique identifier. Saved flows reference nodes by this key, so renaming it breaks existing flows that use the node. Must not be `"base"` or empty. |
 | `label` | yes | Display name in the editor and palette. Safe to change anytime. |
-| `category` | no | Palette grouping. Defaults to `"General"`. |
+| `category` | no | Palette grouping. Defaults to `"General"`, or to the node's sub-folder name (see "Grouping nodes" below). |
 | `inputs` | no | Dict of `name -> default value`. Each entry becomes an editable field on the node. |
 | `outputs` | no | List of output key names. Purely documentation — helps users of your node know what to reference. |
 
@@ -89,17 +89,17 @@ Any failure stops the flow immediately and the execution is recorded as FAILED w
 
 ## Expressions cheat sheet
 
-Conditions, asserts and templates are Python expressions with safe builtins (`len`, `str`, `int`, `min`, `max`, `sorted`, ...). Available names:
+The `pre` / `post` fields and templates are Python expressions with safe builtins (`len`, `str`, `int`, `min`, `max`, `sorted`, ...). Available names:
 
-- `last` — outputs of the previous node (in the assert field: this node's outputs)
+- `last` — outputs of the previous node (in the `post` field: this node's outputs)
 - `<output alias>` — each declared output has an alias box on the node (in its `out` section); typing `casenumber` there publishes that output as a flat variable, so later nodes can write `casenumber` (or `{{ casenumber }}` / `ctx['casenumber']`)
 - `ctx` — the whole context dict; node outputs are also nested under auto-generated node names (e.g. `ctx['set_value_n1']`), but aliases are the recommended way to reference them
 
 Examples:
 
 ```text
-condition:  get_token['status'] == 200
-assert:     last['json']['id'] > 0
+pre:        get_token['status'] == 200
+post:       last['json']['id'] > 0
 input:      Bearer {{ get_token['json']['access_token'] }}
 input:      {{ user['json'] }}          # passes the dict itself, not a string
 ```
@@ -134,10 +134,35 @@ class JsonPath(BaseNode):
         return {"value": cur}
 ```
 
+## Grouping nodes in sub-folders
+
+The `nodes/` directory is scanned **recursively**, so you can organise custom
+nodes into sub-folders:
+
+```
+nodes/
+  set_value.py
+  pg/                 # group of Postgres nodes
+    insert.py
+    query.py
+  http/
+    get.py
+    post.py
+```
+
+Every `.py` file found at any depth is loaded. A node's **top-level
+sub-folder name becomes its default `category`** in the palette, so the files
+under `nodes/pg/` show up grouped under "pg" automatically — unless the class
+sets its own `category`, which always wins. Files and folders whose name
+starts with `_` or `.` (including `__pycache__`) are skipped, and a helper
+module like `nodes/pg/_helpers.py` can hold shared code without being treated
+as a node file. Load errors are reported with their sub-path (e.g.
+`pg/insert.py`).
+
 ## Rules and good practice
 
 - **One file can hold several node classes**; each needs its own `type_name`.
-- Files starting with `_` are ignored.
+- Files and folders starting with `_` or `.` are ignored.
 - **A broken node file never crashes the app** — the import error appears under *Load errors* in the palette. Duplicate `type_name`s are rejected with an error there too.
 - Keep `run()` deterministic where possible and put the data in outputs rather than printing — outputs are persisted per step and visible in the step detail view.
 - Heavy work is fine (runs happen on a background thread), but respect timeouts yourself (see `nodes/http_request.py`).
@@ -176,7 +201,7 @@ class Every5Min(TriggerNode):
         self._stop.set()
 ```
 
-Notes: `ctx` in `start()` contains the active environment's variables (and `{{ }}` templates in inputs are resolved against them). The node's *condition* field filters events — falsy means the event is silently dropped. Trigger nodes have no `assert` field and no input pin. Events that arrive while a previous triggered run is still executing are dropped, so a slow flow never piles up. See `nodes/interval_trigger.py` and `nodes/file_watch_trigger.py`.
+Notes: `ctx` in `start()` contains the active environment's variables (and `{{ }}` templates in inputs are resolved against them). The node's *pre* field filters events — falsy means the event is silently dropped. Trigger nodes have no `post` field and no input pin. Events that arrive while a previous triggered run is still executing are dropped, so a slow flow never piles up. See `nodes/interval_trigger.py` and `nodes/file_watch_trigger.py`.
 
 ## Bundled nodes to learn from
 

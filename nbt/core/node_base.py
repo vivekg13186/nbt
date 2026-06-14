@@ -61,7 +61,7 @@ class TriggerNode(BaseNode):
     `start()` is called once; whenever the event you are watching for occurs,
     call `emit(outputs_dict)` — each emit runs the rest of the flow with the
     outputs available downstream (aliases work as usual). The trigger node's
-    `condition` field acts as an event filter: falsy -> the event is ignored.
+    `pre` field acts as an event filter: falsy -> the event is ignored.
 
         class Every5Min(TriggerNode):
             type_name = "every_5_min"

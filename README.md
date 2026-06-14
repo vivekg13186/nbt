@@ -1,48 +1,63 @@
 # NBT — Node Based Tester
 
-A web-based node editor (NiceGUI + LiteGraph.js) for building, saving and running test flows, backed by SQLite. Intended for internal, single-user use — there is no authentication, and expression fields evaluate Python on the server, so don't expose it beyond a trusted network.
+A web-based node editor (React + LiteGraph.js, FastAPI backend) for building, saving and running test flows, backed by SQLite. Intended for internal, single-user use — there is no authentication, expression fields evaluate Python on the server, and the UI exposes an interactive server shell, so don't expose it beyond a trusted network.
 
 ## Run
 
 ```bash
 pip install -r requirements.txt
-python main.py                      # web UI -> http://localhost:8080
-python main.py --port 9000          # different port
-python main.py --run "Demo Flow"    # headless run, exit code 0 = passed
-python main.py --run "Demo Flow" --env staging   # run with an environment
-python main.py --list               # list flows
-python tests/test_engine.py         # test suite
+cd webui && npm install && npm run build && cd ..   # build the web UI once
+python api_server.py                # http://localhost:8000
+python api_server.py --port 9000    # different port
 ```
 
-A `Demo Flow` is seeded on first launch. The database lives at `data/nbt.db`. LiteGraph is vendored in `nbt/web/static/` (MIT license), so no internet access or CDN is needed.
+Headless / CLI (no server):
+
+```bash
+python main.py --run "Demo Flow"                 # exit code 0 = passed
+python main.py --run "Demo Flow" --env staging   # run with an environment
+python main.py --list                            # list flows
+python tests/test_engine.py                      # test suite
+```
+
+A `Demo Flow` is seeded on first launch. The database lives at `data/nbt.db`.
+
+For frontend development, run the API and the Vite dev server (with hot reload) as two processes instead:
+
+```bash
+python api_server.py                     # API -> http://localhost:8000
+cd webui && npm run dev                   # SPA -> http://localhost:5173 (proxies /api)
+```
+
+See `webui/README.md` for UI details.
 
 ## Using the editor
 
-The header holds the flow selector and CRUD buttons (New / Rename / Dup / Del), the environment picker, and Save / Run / Listen. To add a node, right-click the canvas and pick from the menu (or double-click for the search box). Drag from a node's `out` pin to another node's `in` pin to connect; the canvas pans and zooms natively (mouse wheel). The executions table below the canvas is sortable; click a run to see its steps, click a step for inputs/outputs/error detail.
+The tab bar holds open workflows (right-click a tab for Save / Rename / Duplicate / Close / Delete); the toolbar has the active workflow name, Add node, the environment picker, and Save / Listen / Run. The left rail switches between Workflows, Nodes, Environments, Listeners and Executions. To add a node, use the Nodes palette, the toolbar's Add node, or right-click the canvas. Drag from a node's `out` pin to another node's `in` pin to connect; the canvas pans and zooms with the mouse. A toggleable shell sits at the bottom. The Executions page lists runs; click one for step inputs/outputs/error detail.
 
-Each node has its declared **inputs**, a **condition** expression (falsy → node is skipped) and an **assert** expression (falsy → node fails). Each declared output gets an alias box (`→ value`): type a variable name (e.g. `casenumber`) and that output is published flat into the context — later nodes can use `casenumber` / `{{ casenumber }}` / `ctx['casenumber']`. Use `last` for the previous node's outputs.
+Each node has its declared **inputs**, a **pre** expression (falsy → node is skipped) and a **post** expression (falsy → node fails). Edit a node's name via its title (right-click node → Title). Each declared output gets an alias box (`→ value`): type a variable name (e.g. `casenumber`) and that output is published flat into the context — later nodes can use `casenumber` / `{{ casenumber }}` / `ctx['casenumber']`. Use `last` for the first connected parent's outputs.
 
-## Execution rules
+## Execution rules (DAG)
 
-Execution starts at the single node with no previous node (validated: exactly one start, single chain, no cycles, no orphans) and proceeds link by link. A node fails if `run()` raises, if the class `check()` hook raises, or if its assert expression is falsy. Any failure fails the whole flow immediately; otherwise it passes. Every run and every step is recorded in SQLite.
+A flow is a directed acyclic graph: nodes may have multiple inputs and outputs, branches and joins are allowed, and a graph may contain several disconnected subgraphs — the only structural rule is no cycles. Nodes execute in topological order; a node's `last` is its first connected parent's outputs. A node fails if `run()` raises, if the class `check()` hook raises, or if its post expression is falsy. Any failure fails the whole flow immediately; otherwise it passes. Every run and every step is recorded in SQLite.
 
 ## Trigger (listener) flows
 
-A flow can start with a **trigger node** (marked ⚡) instead of a regular node — e.g. *Interval Trigger* (emit every N seconds) or *File Watch Trigger* (emit when a file changes). Trigger flows aren't Run; press **Listen** to arm them. Every emitted event executes the rest of the chain with the trigger's outputs available downstream, and each event becomes its own recorded execution. The trigger's *condition* field is an event filter — falsy events are ignored without creating an execution.
+A flow can contain a **trigger node** (marked ⚡) — e.g. *Interval Trigger* (emit every N seconds) or *File Watch Trigger* (emit when a file changes). A trigger need not be connected to anything; it can stand alone or be the root of a subgraph. Trigger flows aren't Run; press **Listen** to arm the trigger. Every emitted event executes the subgraph reachable from the trigger with the trigger's outputs available downstream, and each event becomes its own recorded execution. The trigger's *pre* field is an event filter — falsy events are ignored without creating an execution.
 
 Multiple flows can listen at once (one listener per flow, each on a snapshot of its graph taken when armed). The **Listen** button toggles the *current* flow; **Listeners: N** opens a manager with live stats (events / runs / filtered / busy-skips / last result) and per-listener Stop buttons, plus Stop All. Listeners live in the server process, so they keep firing with no browser tab open. Events arriving while that flow's previous run is still in progress are dropped and counted.
 
 ## Environments
 
-Environments are named sets of variables (e.g. `staging`, `prod`) managed via the **Envs** button — variables are a JSON object like `{"base_url": "https://stg.example.com", "token": "abc"}`. Pick the active environment in the `Env` dropdown before running or listening; its variables are injected into the context, usable as `{{ base_url }}` in inputs, `base_url` in condition/assert expressions, `env['token']` or `ctx['token']` anywhere. Each execution records which environment it ran with.
+Environments are named sets of variables (e.g. `staging`, `prod`) managed in the **Environments** view — variables are a JSON object like `{"base_url": "https://stg.example.com", "token": "abc"}` edited in the JSON editor. Pick the active environment in the toolbar dropdown before running or listening; its variables are injected into the context, usable as `{{ base_url }}` in inputs, `base_url` in pre/post expressions, `env['token']` or `ctx['token']` anywhere. Each execution records which environment it ran with.
 
 ## Expressions and templating
 
-Conditions, asserts and `{{ ... }}` templates inside string inputs are Python expressions evaluated against the context: `last` is the previous node's outputs, output aliases and environment variables are available as plain names, and `ctx` is the whole dict. Example: input `{{ upper }}`, assert `last['status'] == 200`.
+The `pre` / `post` fields and `{{ ... }}` templates inside string inputs are Python expressions evaluated against the context: `last` is the previous node's outputs, output aliases and environment variables are available as plain names, and `ctx` is the whole dict. Example: input `{{ upper }}`, post `last['status'] == 200`.
 
 ## Custom nodes
 
-Drop a `.py` file in `nodes/` (auto-discovered at server start):
+Drop a `.py` file anywhere under `nodes/` (scanned recursively at server start). Group nodes into sub-folders — e.g. `nodes/pg/insert.py` — and the sub-folder name becomes the node's default palette category:
 
 ```python
 from nbt.core.node_base import BaseNode
@@ -61,6 +76,6 @@ class MyNode(BaseNode):
         assert outputs["result"], "empty result"   # optional assert hook
 ```
 
-Input widget types come from the defaults (bool → toggle, int/float → number, else text). A broken node file never crashes the app — it's reported under *Load errors* in the palette. For listener-style nodes subclass `TriggerNode` — see `docs/CUSTOM_NODES.md` for the full guide.
+Input widget types come from the defaults (bool → toggle, int/float → number, else text). Files and folders starting with `_` or `.` are ignored (so `nodes/pg/_helpers.py` can hold shared code). A broken node file never crashes the app — it's reported (with its sub-path) under *Load errors* in the palette. For listener-style nodes subclass `TriggerNode` — see `docs/CUSTOM_NODES.md` for the full guide.
 
 Bundled nodes: Set Value, Python Eval, HTTP Request, Delay, Assert Equals, Interval Trigger ⚡, File Watch Trigger ⚡.
