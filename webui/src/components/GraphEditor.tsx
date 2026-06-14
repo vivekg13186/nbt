@@ -26,8 +26,13 @@ export default function GraphEditor() {
 
     const ro = new ResizeObserver(() => g.resize());
     if (wrapRef.current) ro.observe(wrapRef.current);
+    // Re-run HiDPI sizing on window resize / DPI change (e.g. moving the
+    // window to a monitor with a different devicePixelRatio).
+    const onWin = () => g.resize();
+    window.addEventListener("resize", onWin);
     return () => {
       ro.disconnect();
+      window.removeEventListener("resize", onWin);
       g.destroy();
       gRef.current = null;
       if (activeGraphRef.current === g) activeGraphRef.current = null;

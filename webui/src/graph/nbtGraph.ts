@@ -43,6 +43,7 @@ export class NbtGraph {
     this.canvas.allow_searchbox = false;
     this.installAutoId();
     this.installKeyGuard();
+    this.installHiDPI();
     // NOTE: do NOT call graph.start(). LGraphCanvas already runs its own
     // requestAnimationFrame render loop (startRendering); graph.start() adds a
     // second per-frame runStep loop that re-executes nodes and double-drives
@@ -123,13 +124,32 @@ export class NbtGraph {
     };
   }
 
+  // Make the canvas crisp on HiDPI / Retina screens. LiteGraph has no DPR
+  // support: it sizes its backing store in CSS pixels, so on a 2x display
+  // everything is upscaled and blurry. We size the backing store in *device*
+  // pixels and scale LiteGraph's draw transform by the DPR. Mouse mapping is
+  // computed from CSS pixels / ds.scale, so it stays consistent.
+  private installHiDPI() {
+    const ds = this.canvas.ds;
+    ds.toCanvasContext = function (ctx: any) {
+      const d = window.devicePixelRatio || 1;
+      ctx.scale(d * this.scale, d * this.scale);
+      ctx.translate(this.offset[0], this.offset[1]);
+    };
+  }
+
   resize() {
     const parent = this.el.parentElement;
     if (!parent) return;
     const r = parent.getBoundingClientRect();
-    this.el.width = r.width;
-    this.el.height = r.height;
-    this.canvas.resize();
+    const dpr = window.devicePixelRatio || 1;
+    const w = Math.max(1, Math.round(r.width));
+    const h = Math.max(1, Math.round(r.height));
+    // CSS (layout) size in CSS pixels…
+    this.el.style.width = w + "px";
+    this.el.style.height = h + "px";
+    // …backing store in device pixels for crisp rendering.
+    this.canvas.resize(Math.round(w * dpr), Math.round(h * dpr));
     this.canvas.setDirty(true, true);
   }
 
