@@ -8,6 +8,8 @@ import type {
   ListenerStat,
   LoadError,
   NodeMeta,
+  NodePackage,
+  PackagesResult,
   RunResult,
 } from "./types";
 
@@ -92,6 +94,44 @@ export const api = {
   getExecution: (id: string) => req<ExecutionDetail>(`/executions/${id}`),
   clearExecutions: () =>
     req<{ ok: boolean }>("/executions", { method: "DELETE" }),
+
+  // node packages
+  listPackages: () => req<PackagesResult>("/packages"),
+  installGit: (url: string, ref?: string | null) =>
+    req<PackagesResult & { package: NodePackage; pip_log?: string }>(
+      "/packages/install_git",
+      { method: "POST", body: JSON.stringify({ url, ref: ref || null }) },
+    ),
+  installZip: async (file: File) => {
+    const form = new FormData();
+    form.append("file", file);
+    const res = await fetch(BASE + "/packages/install_zip", {
+      method: "POST",
+      body: form,
+    });
+    if (!res.ok) {
+      let detail = res.statusText;
+      try {
+        const b = await res.json();
+        if (b?.detail) detail = b.detail;
+      } catch {
+        /* ignore */
+      }
+      throw new Error(detail);
+    }
+    return (await res.json()) as PackagesResult & {
+      package: NodePackage;
+      pip_log?: string;
+    };
+  },
+  updatePackage: (name: string) =>
+    req<PackagesResult>(`/packages/${encodeURIComponent(name)}/update`, {
+      method: "POST",
+    }),
+  removePackage: (name: string) =>
+    req<PackagesResult>(`/packages/${encodeURIComponent(name)}`, {
+      method: "DELETE",
+    }),
 
   // listeners
   listeners: () => req<ListenerStat[]>("/listeners"),

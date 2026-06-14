@@ -159,6 +159,41 @@ module like `nodes/pg/_helpers.py` can hold shared code without being treated
 as a node file. Load errors are reported with their sub-path (e.g.
 `pg/insert.py`).
 
+## Node packages (install / share groups of nodes)
+
+A *node package* is just a sub-folder of node files that can be installed,
+updated and removed from the **Packages** view in the UI — from a **git URL**
+or a **`.nbtpack` / `.zip` bundle** (you can also drag a bundle anywhere onto
+the window). Add an optional manifest `nbt-package.json` at the package root:
+
+```json
+{
+  "name": "pg",
+  "version": "1.0.0",
+  "description": "Postgres nodes",
+  "author": "you",
+  "requirements": ["psycopg2-binary>=2.9"]
+}
+```
+
+`name` (defaulting to the folder/repo/zip name) becomes the install folder
+`nodes/<name>/` and the default palette category. Anything in `requirements`
+is `pip install`-ed automatically on install/update. A package laid out as
+
+```
+my-pg-nodes/            # git repo or zip root
+  nbt-package.json
+  insert.py
+  query.py
+  _shared.py            # helper, ignored by the scanner
+```
+
+installs to `nodes/pg/`. Installed packages are tracked in
+`nodes/.nbt-packages.json` (a dot-file, ignored by the scanner); git packages
+get an **Update** button (re-clone), and **Remove** deletes the folder and
+unloads its nodes. Because node files execute Python on the server, only
+install packages you trust.
+
 ## Rules and good practice
 
 - **One file can hold several node classes**; each needs its own `type_name`.

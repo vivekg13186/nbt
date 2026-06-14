@@ -7,7 +7,8 @@ export type View =
   | "nodes"
   | "environment"
   | "listeners"
-  | "runs";
+  | "runs"
+  | "packages";
 
 const ENV_KEY = "nbt.activeEnv";
 

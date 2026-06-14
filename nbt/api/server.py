@@ -18,13 +18,15 @@ import time
 from collections import deque
 from typing import Any, Optional
 
-from fastapi import FastAPI, HTTPException, WebSocket, WebSocketDisconnect
+from fastapi import (FastAPI, File, HTTPException, UploadFile, WebSocket,
+                     WebSocketDisconnect)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.concurrency import run_in_threadpool
 from pydantic import BaseModel
 
 from ..core.listener import FlowListener
 from ..core.engine import Engine
+from ..core.packages import PackageManager, PackageError
 
 
 # --------------------------------------------------------------------------
@@ -195,6 +197,11 @@ class RunBody(BaseModel):
     environment: Optional[str] = None
 
 
+class GitInstallBody(BaseModel):
+    url: str
+    ref: Optional[str] = None
+
+
 # --------------------------------------------------------------------------
 # App factory
 # --------------------------------------------------------------------------
@@ -202,6 +209,7 @@ def create_app(db, registry) -> FastAPI:
     engine = Engine(registry, db)
     logbus = LogBus()
     listeners = ListenerManager(engine, logbus)
+    packages = PackageManager(registry.nodes_dir, registry)
 
     app = FastAPI(title="NBT API", version="1.0")
     app.add_middleware(
@@ -401,6 +409,57 @@ def create_app(db, registry) -> FastAPI:
     def stop_all_listen():
         n = listeners.stop_all()
         return {"ok": True, "stopped": n}
+
+    # ---------------- node packages ----------------
+    def _pkg_list():
+        return {"packages": packages.list(),
+                "load_errors": [{"file": f, "error": e}
+                                for f, e in registry.errors]}
+
+    @app.get("/api/packages")
+    def list_packages():
+        return _pkg_list()
+
+    @app.post("/api/packages/install_git")
+    async def install_git(body: GitInstallBody):
+        try:
+            res = await run_in_threadpool(
+                packages.install_git, body.url, body.ref)
+        except PackageError as e:
+            raise HTTPException(400, str(e))
+        logbus.emit(f"[pkg] installed '{res['package']['name']}' (git)",
+                    level="ok")
+        return {**res, **_pkg_list()}
+
+    @app.post("/api/packages/install_zip")
+    async def install_zip(file: UploadFile = File(...)):
+        data = await file.read()
+        try:
+            res = await run_in_threadpool(
+                packages.install_zip, data, file.filename or "package.zip")
+        except PackageError as e:
+            raise HTTPException(400, str(e))
+        logbus.emit(f"[pkg] installed '{res['package']['name']}' (zip)",
+                    level="ok")
+        return {**res, **_pkg_list()}
+
+    @app.post("/api/packages/{name}/update")
+    async def update_package(name: str):
+        try:
+            res = await run_in_threadpool(packages.update, name)
+        except PackageError as e:
+            raise HTTPException(400, str(e))
+        logbus.emit(f"[pkg] updated '{name}'", level="ok")
+        return {**res, **_pkg_list()}
+
+    @app.delete("/api/packages/{name}")
+    def remove_package(name: str):
+        try:
+            res = packages.remove(name)
+        except PackageError as e:
+            raise HTTPException(400, str(e))
+        logbus.emit(f"[pkg] removed '{name}'")
+        return {**res, **_pkg_list()}
 
     # ---------------- log stream ----------------
     @app.websocket("/api/logs")

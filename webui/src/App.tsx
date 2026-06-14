@@ -12,6 +12,7 @@ import GraphEditor from "./components/GraphEditor";
 import EnvEditor from "./components/EnvEditor";
 import ListenersPage from "./components/ListenersPage";
 import RunsPage from "./components/RunsPage";
+import PackagesPage from "./components/PackagesPage";
 import Terminal from "./components/Terminal";
 
 export default function App() {
@@ -23,6 +24,7 @@ export default function App() {
   const refreshFlows = useStore((s) => s.refreshFlows);
   const refreshEnvs = useStore((s) => s.refreshEnvs);
   const openFlow = useStore((s) => s.openFlow);
+  const setView = useStore((s) => s.setView);
 
   const [dragging, setDragging] = useState(false);
 
@@ -32,11 +34,27 @@ export default function App() {
     );
   }, [loadNodes, refreshFlows, refreshEnvs, message]);
 
+  // Install a dropped node-package bundle (.nbtpack / .zip).
+  async function importPackage(file: File) {
+    try {
+      const r = await api.installZip(file);
+      loadNodes();
+      setView("packages");
+      message.success(`Installed package "${r.package.name}"`);
+    } catch (e) {
+      message.error(`Package install failed: ${(e as Error).message}`);
+    }
+  }
+
   // Import a dropped workflow JSON file as a new workflow tab, or show why
   // it couldn't be imported.
   async function importFile(file: File) {
+    if (/\.(nbtpack|zip)$/i.test(file.name)) {
+      importPackage(file);
+      return;
+    }
     if (!/\.json$/i.test(file.name)) {
-      message.error(`"${file.name}" is not a .json file`);
+      message.error(`"${file.name}" is not a .json or .nbtpack/.zip file`);
       return;
     }
     let data: unknown;
@@ -121,6 +139,7 @@ export default function App() {
           {view === "environment" && <EnvEditor />}
           {view === "listeners" && <ListenersPage />}
           {view === "runs" && <RunsPage />}
+          {view === "packages" && <PackagesPage />}
           {terminalOpen && <Terminal />}
         </div>
       </div>
@@ -130,7 +149,8 @@ export default function App() {
           <div className="nbt-dropzone-card">
             <FileJson size={40} />
             <div style={{ marginTop: 10, fontSize: 16 }}>
-              Drop a workflow <code>.json</code> to import it
+              Drop a workflow <code>.json</code> or a node package{" "}
+              <code>.nbtpack</code> to install it
             </div>
           </div>
         </div>

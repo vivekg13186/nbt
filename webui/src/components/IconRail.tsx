@@ -4,6 +4,7 @@ import {
   ChevronRight,
   History,
   LayoutGrid,
+  Package,
   Settings,
   Workflow,
   Zap,
@@ -14,6 +15,7 @@ import type { View } from "../store";
 const ITEMS: { view: View; icon: React.ReactNode; label: string }[] = [
   { view: "workflow", icon: <Workflow size={20} />, label: "Workflows" },
   { view: "nodes", icon: <LayoutGrid size={20} />, label: "Nodes" },
+  { view: "packages", icon: <Package size={20} />, label: "Packages" },
   { view: "environment", icon: <Settings size={20} />, label: "Environments" },
   { view: "listeners", icon: <Zap size={20} />, label: "Listeners" },
   { view: "runs", icon: <History size={20} />, label: "Executions" },

@@ -18,6 +18,30 @@ export interface LoadError {
   error: string;
 }
 
+export interface NodePackageSource {
+  type: "git" | "zip" | "local";
+  url?: string;
+  ref?: string | null;
+  filename?: string;
+}
+
+export interface NodePackage {
+  name: string;
+  version: string | null;
+  description?: string | null;
+  author?: string | null;
+  requirements: string[];
+  source: NodePackageSource;
+  installed: boolean;
+  node_count: number;
+  installed_at?: number;
+}
+
+export interface PackagesResult {
+  packages: NodePackage[];
+  load_errors: LoadError[];
+}
+
 export interface GraphNode {
   id: string;
   type: string;
