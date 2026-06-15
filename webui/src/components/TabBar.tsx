@@ -1,10 +1,11 @@
-import { useState } from "react";
+import { useRef, useState } from "react";
 import { App as AntApp, Button, Dropdown, Input, Modal, Tooltip } from "antd";
 import type { MenuProps } from "antd";
-import { Menu, Plus, X } from "lucide-react";
+import { Download, Menu, Plus, Upload, X } from "lucide-react";
 import { useStore } from "../store";
 import { api } from "../api";
 import { activeGraphRef } from "../graph/active";
+import type { Graph } from "../types";
 
 export default function TabBar() {
   const { message, modal } = AntApp.useApp();
@@ -18,6 +19,7 @@ export default function TabBar() {
 
   const [newOpen, setNewOpen] = useState(false);
   const [newName, setNewName] = useState("");
+  const importRef = useRef<HTMLInputElement>(null);
 
   const nameOf = (id: string) =>
     flows.find((f) => f.id === id)?.name ?? "(deleted)";
@@ -25,6 +27,68 @@ export default function TabBar() {
   async function saveActiveGraph() {
     if (activeFlowId && activeGraphRef.current) {
       await api.saveGraph(activeFlowId, activeGraphRef.current.exportGraph());
+    }
+  }
+
+  // ----- export: download a workflow's graph as JSON -----
+  async function exportFlow(id: string) {
+    try {
+      const name = nameOf(id);
+      const graph =
+        id === activeFlowId && activeGraphRef.current
+          ? activeGraphRef.current.exportGraph()
+          : (await api.getFlow(id)).graph;
+      const blob = new Blob([JSON.stringify(graph, null, 2)], {
+        type: "application/json",
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement("a");
+      a.href = url;
+      a.download = `${name}.json`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+    } catch (e) {
+      message.error((e as Error).message);
+    }
+  }
+
+  // ----- import: read a .json file as a new workflow -----
+  async function importFromFile(file: File) {
+    if (!/\.json$/i.test(file.name)) {
+      message.error(`"${file.name}" is not a .json file`);
+      return;
+    }
+    let data: unknown;
+    try {
+      data = JSON.parse(await file.text());
+    } catch (e) {
+      message.error(`Invalid JSON: ${(e as Error).message}`);
+      return;
+    }
+    const obj = data as { nodes?: unknown; links?: unknown };
+    if (!obj || typeof obj !== "object" || !Array.isArray(obj.nodes)) {
+      message.error('Not a workflow graph (expected an object with "nodes")');
+      return;
+    }
+    const graph: Graph = {
+      nodes: obj.nodes as Graph["nodes"],
+      links: Array.isArray(obj.links) ? (obj.links as Graph["links"]) : [],
+    };
+    const base = file.name.replace(/\.json$/i, "") || "Imported flow";
+    for (let i = 0; ; i++) {
+      const name = i === 0 ? base : `${base} (${i})`;
+      try {
+        const flow = await api.createFlow(name, graph);
+        await refreshFlows();
+        openFlow(flow.id);
+        message.success(`Imported "${name}"`);
+        return;
+      } catch (e) {
+        const msg = (e as Error).message;
+        if (/exist|already|use/i.test(msg) && i < 20) continue;
+        message.error(`Import failed: ${msg}`);
+        return;
+      }
     }
   }
 
@@ -48,6 +112,7 @@ export default function TabBar() {
         { key: "save", label: "Save" },
         { key: "rename", label: "Rename" },
         { key: "duplicate", label: "Duplicate" },
+        { key: "export", label: "Export JSON" },
         { type: "divider" },
         { key: "close", label: "Close tab" },
         { key: "delete", label: "Delete workflow", danger: true },
@@ -66,6 +131,8 @@ export default function TabBar() {
           renameFlow(id, name);
         } else if (key === "duplicate") {
           duplicateFlow(id, name);
+        } else if (key === "export") {
+          exportFlow(id);
         } else if (key === "close") {
           closeTab(id);
         } else if (key === "delete") {
@@ -197,6 +264,34 @@ export default function TabBar() {
           onClick={() => setNewOpen(true)}
         />
       </Tooltip>
+      <Tooltip title="Import workflow (.json)">
+        <Button
+          type="text"
+          size="small"
+          icon={<Upload size={15} />}
+          onClick={() => importRef.current?.click()}
+        />
+      </Tooltip>
+      <Tooltip title="Export current workflow (.json)">
+        <Button
+          type="text"
+          size="small"
+          icon={<Download size={15} />}
+          disabled={!activeFlowId}
+          onClick={() => activeFlowId && exportFlow(activeFlowId)}
+        />
+      </Tooltip>
+      <input
+        ref={importRef}
+        type="file"
+        accept=".json"
+        style={{ display: "none" }}
+        onChange={(e) => {
+          const f = e.target.files?.[0];
+          if (f) importFromFile(f);
+          e.target.value = "";
+        }}
+      />
       <div style={{ flex: 1 }} />
 
       <Modal

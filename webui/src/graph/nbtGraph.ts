@@ -4,6 +4,32 @@
 import { LiteGraph, LGraph, LGraphCanvas } from "litegraph.js";
 import type { Graph, GraphNode, NodeMeta } from "../types";
 
+// A LiteGraph input slot holds a single link, so to allow joins (a node with
+// several parents) we give nodes a dynamic number of flow input pins: there is
+// always exactly one free "in" pin, and a new one appears each time you wire a
+// parent in. Trailing empty pins are trimmed when parents are removed.
+function syncFlowInputs(node: any) {
+  if (!node.inputs) return;
+  // trim trailing empty pins, keeping a single free one
+  while (
+    node.inputs.length > 1 &&
+    node.inputs[node.inputs.length - 1].link == null &&
+    node.inputs[node.inputs.length - 2].link == null
+  ) {
+    node.removeInput(node.inputs.length - 1);
+  }
+  const hasFree = node.inputs.some((i: any) => i.link == null);
+  if (!hasFree) node.addInput("in", "flow");
+}
+
+function freeInputSlot(node: any): number {
+  for (let i = 0; i < node.inputs.length; i++) {
+    if (node.inputs[i].link == null) return i;
+  }
+  node.addInput("in", "flow");
+  return node.inputs.length - 1;
+}
+
 function coerce(meta: NodeMeta, name: string, value: unknown): unknown {
   const p = meta.params.find((q) => q.name === name);
   if (!p) return value;
@@ -108,6 +134,18 @@ export class NbtGraph {
     }
     (N as any).title = meta.label + (meta.is_trigger ? " ⚡" : "");
     (N as any).prototype.nbtType = meta.type;
+    // Non-trigger nodes accept multiple parents (joins) via dynamic input pins.
+    if (!meta.is_trigger) {
+      (N as any).prototype.onConnectionsChange = function (
+        type: number,
+        _slot: number,
+        _connected: boolean,
+        _link: any,
+        _ioSlot: any,
+      ) {
+        if (type === LiteGraph.INPUT) syncFlowInputs(this);
+      };
+    }
     return N as any;
   }
 
@@ -244,7 +282,8 @@ export class NbtGraph {
     (data.links || []).forEach((l) => {
       const a = byId[l[0]];
       const b = byId[l[1]];
-      if (a && b) a.connect(0, b, 0);
+      // connect each parent into a fresh input pin so joins reload intact
+      if (a && b) a.connect(0, b, freeInputSlot(b));
     });
     this.installAutoId();
     this.canvas.setDirty(true, true);
