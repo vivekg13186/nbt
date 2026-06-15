@@ -8,7 +8,7 @@ import {
   Tag,
   Tooltip,
 } from "antd";
-import { Play, Plus, Save, SquareTerminal, Zap } from "lucide-react";
+import { Play, Plus, Save, ScrollText, SquareTerminal, Zap } from "lucide-react";
 import { useStore } from "../store";
 import { api } from "../api";
 import { activeGraphRef } from "../graph/active";
@@ -23,8 +23,10 @@ export default function Toolbar() {
   const setActiveEnv = useStore((s) => s.setActiveEnv);
   const view = useStore((s) => s.view);
   const terminalOpen = useStore((s) => s.terminalOpen);
+  const bottomTab = useStore((s) => s.bottomTab);
   const toggleTerminal = useStore((s) => s.toggleTerminal);
-  const setTerminalOpen = useStore((s) => s.setTerminalOpen);
+  const setBottomTab = useStore((s) => s.setBottomTab);
+  const openBottom = useStore((s) => s.openBottom);
 
   const [busy, setBusy] = useState(false);
   const flow = flows.find((f) => f.id === activeFlowId);
@@ -46,7 +48,7 @@ export default function Toolbar() {
   async function onRun() {
     if (!activeFlowId) return;
     setBusy(true);
-    setTerminalOpen(true);
+    openBottom("log");
     try {
       await save();
       const r = await api.runFlow(activeFlowId, activeEnvName);
@@ -61,7 +63,7 @@ export default function Toolbar() {
 
   async function onListen() {
     if (!activeFlowId) return;
-    setTerminalOpen(true);
+    openBottom("log");
     try {
       await save();
       await api.startListen(activeFlowId, activeEnvName);
@@ -155,13 +157,35 @@ export default function Toolbar() {
         Run
       </Button>
 
-      <Tooltip title="Toggle terminal">
+      <Tooltip title="Show log">
         <Button
           size="small"
-          type={terminalOpen ? "primary" : "default"}
-          ghost={terminalOpen}
+          type={
+            terminalOpen && bottomTab === "log" ? "primary" : "default"
+          }
+          ghost={terminalOpen && bottomTab === "log"}
+          icon={<ScrollText size={15} />}
+          onClick={() => {
+            if (terminalOpen && bottomTab === "log") toggleTerminal();
+            else openBottom("log");
+          }}
+        />
+      </Tooltip>
+      <Tooltip title="Toggle shell">
+        <Button
+          size="small"
+          type={
+            terminalOpen && bottomTab === "shell" ? "primary" : "default"
+          }
+          ghost={terminalOpen && bottomTab === "shell"}
           icon={<SquareTerminal size={15} />}
-          onClick={toggleTerminal}
+          onClick={() => {
+            if (terminalOpen && bottomTab === "shell") toggleTerminal();
+            else {
+              setBottomTab("shell");
+              openBottom("shell");
+            }
+          }}
         />
       </Tooltip>
     </div>

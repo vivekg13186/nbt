@@ -36,6 +36,9 @@ interface State {
   terminalOpen: boolean;
   toggleTerminal: () => void;
   setTerminalOpen: (b: boolean) => void;
+  bottomTab: "shell" | "log";
+  setBottomTab: (t: "shell" | "log") => void;
+  openBottom: (t: "shell" | "log") => void;
 
   // open workflow tabs
   openTabs: string[]; // flow ids, in order
@@ -88,6 +91,9 @@ export const useStore = create<State>((set, get) => ({
   terminalOpen: false,
   toggleTerminal: () => set((s) => ({ terminalOpen: !s.terminalOpen })),
   setTerminalOpen: (terminalOpen) => set({ terminalOpen }),
+  bottomTab: "shell",
+  setBottomTab: (bottomTab) => set({ bottomTab }),
+  openBottom: (bottomTab) => set({ terminalOpen: true, bottomTab }),
 
   openTabs: [],
   activeFlowId: null,

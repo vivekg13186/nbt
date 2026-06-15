@@ -1,148 +1,70 @@
-import { useEffect, useRef, useState } from "react";
+import { useState } from "react";
 import { Badge, Button, Tooltip } from "antd";
-import { ChevronDown, RotateCw } from "lucide-react";
-import { Terminal as XTerm } from "@xterm/xterm";
-import { FitAddon } from "@xterm/addon-fit";
-import "@xterm/xterm/css/xterm.css";
+import { ChevronDown, Eraser, RotateCw } from "lucide-react";
 import { useStore } from "../store";
-
-function shellSocketUrl(): string {
-  const proto = location.protocol === "https:" ? "wss:" : "ws:";
-  return `${proto}//${location.host}/api/shell`;
-}
-
-// Dark terminal palette.
-const PS_THEME = {
-  background: "#0c0c0c",
-  foreground: "#cccccc",
-  cursor: "#eeedf0",
-  cursorAccent: "#0c0c0c",
-  selectionBackground: "#264f78",
-  black: "#0c0c0c",
-  red: "#c50f1f",
-  green: "#13a10e",
-  yellow: "#c19c00",
-  blue: "#3b78ff",
-  magenta: "#881798",
-  cyan: "#3a96dd",
-  white: "#cccccc",
-  brightBlack: "#767676",
-  brightRed: "#e74856",
-  brightGreen: "#16c60c",
-  brightYellow: "#f9f1a5",
-  brightBlue: "#5ca0f2",
-  brightMagenta: "#b4009e",
-  brightCyan: "#61d6d6",
-  brightWhite: "#f2f2f2",
-};
+import ShellBody from "./ShellBody";
+import LogBody from "./LogBody";
 
 export default function Terminal() {
   const toggleTerminal = useStore((s) => s.toggleTerminal);
-  const hostRef = useRef<HTMLDivElement>(null);
-  const termRef = useRef<XTerm | null>(null);
-  const fitRef = useRef<FitAddon | null>(null);
-  const wsRef = useRef<WebSocket | null>(null);
-  const [connected, setConnected] = useState(false);
-  const [generation, setGeneration] = useState(0); // bump to reconnect
+  const tab = useStore((s) => s.bottomTab);
+  const setTab = useStore((s) => s.setBottomTab);
 
-  useEffect(() => {
-    if (!hostRef.current) return;
+  const [shellGen, setShellGen] = useState(0);
+  const [logClear, setLogClear] = useState(0);
+  const [shellConn, setShellConn] = useState(false);
+  const [logConn, setLogConn] = useState(false);
 
-    const term = new XTerm({
-      fontFamily:
-        '"Cascadia Mono", "Consolas", "SF Mono", ui-monospace, monospace',
-      fontSize: 13,
-      cursorBlink: true,
-      theme: PS_THEME,
-      scrollback: 5000,
-    });
-    const fit = new FitAddon();
-    term.loadAddon(fit);
-    term.open(hostRef.current);
-    fit.fit();
-    termRef.current = term;
-    fitRef.current = fit;
+  const conn = tab === "shell" ? shellConn : logConn;
 
-    const enc = new TextEncoder();
-    let ws: WebSocket;
-    let stopped = false;
-
-    function sendResize() {
-      if (ws && ws.readyState === WebSocket.OPEN) {
-        ws.send(JSON.stringify({ resize: [term.cols, term.rows] }));
-      }
-    }
-
-    function connect() {
-      ws = new WebSocket(shellSocketUrl());
-      ws.binaryType = "arraybuffer";
-      wsRef.current = ws;
-      ws.onopen = () => {
-        setConnected(true);
-        sendResize();
-        term.focus();
-      };
-      ws.onclose = () => {
-        setConnected(false);
-        if (!stopped) term.write("\r\n\x1b[90m[shell exited]\x1b[0m\r\n");
-      };
-      ws.onerror = () => ws.close();
-      ws.onmessage = (ev) => {
-        if (typeof ev.data === "string") term.write(ev.data);
-        else term.write(new Uint8Array(ev.data));
-      };
-    }
-    connect();
-
-    const dataSub = term.onData((d) => {
-      if (ws.readyState === WebSocket.OPEN) ws.send(enc.encode(d));
-    });
-    const resizeSub = term.onResize(() => sendResize());
-
-    const ro = new ResizeObserver(() => {
-      try {
-        fit.fit();
-      } catch {
-        /* ignore */
-      }
-    });
-    ro.observe(hostRef.current);
-
-    return () => {
-      stopped = true;
-      ro.disconnect();
-      dataSub.dispose();
-      resizeSub.dispose();
-      try {
-        ws.close();
-      } catch {
-        /* ignore */
-      }
-      term.dispose();
-      termRef.current = null;
-    };
-  }, [generation]);
+  function tabBtn(key: "shell" | "log", label: string) {
+    const activeTab = tab === key;
+    return (
+      <span
+        onClick={() => setTab(key)}
+        style={{
+          cursor: "pointer",
+          padding: "2px 10px",
+          borderRadius: 6,
+          fontWeight: activeTab ? 600 : 400,
+          background: activeTab ? "var(--nbt-active)" : "transparent",
+          color: activeTab ? "var(--nbt-primary)" : "inherit",
+        }}
+      >
+        {label}
+      </span>
+    );
+  }
 
   return (
     <div className="nbt-terminal">
       <div className="nbt-terminal-head">
-        <span style={{ display: "flex", alignItems: "center", gap: 8 }}>
-          <Badge status={connected ? "success" : "error"} />
-          <strong>Shell</strong>
-          <span style={{ opacity: 0.5 }}>
-            {connected ? "connected" : "disconnected"}
-          </span>
+        <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <Badge status={conn ? "success" : "error"} />
+          {tabBtn("shell", "Shell")}
+          {tabBtn("log", "Log")}
         </span>
         <span>
-          <Tooltip title="Restart shell">
-            <Button
-              type="text"
-              size="small"
-              icon={<RotateCw size={15} />}
-              onClick={() => setGeneration((g) => g + 1)}
-            />
-          </Tooltip>
-          <Tooltip title="Hide terminal">
+          {tab === "shell" ? (
+            <Tooltip title="Restart shell">
+              <Button
+                type="text"
+                size="small"
+                icon={<RotateCw size={15} />}
+                onClick={() => setShellGen((g) => g + 1)}
+              />
+            </Tooltip>
+          ) : (
+            <Tooltip title="Clear log">
+              <Button
+                type="text"
+                size="small"
+                icon={<Eraser size={15} />}
+                onClick={() => setLogClear((c) => c + 1)}
+              />
+            </Tooltip>
+          )}
+          <Tooltip title="Hide panel">
             <Button
               type="text"
               size="small"
@@ -152,9 +74,18 @@ export default function Terminal() {
           </Tooltip>
         </span>
       </div>
-      <div className="nbt-terminal-body">
-        <div ref={hostRef} className="nbt-xterm-host" />
-      </div>
+      {/* both bodies stay mounted so the shell session and log stream
+          persist while switching tabs */}
+      <ShellBody
+        generation={shellGen}
+        active={tab === "shell"}
+        onConn={setShellConn}
+      />
+      <LogBody
+        active={tab === "log"}
+        clearSignal={logClear}
+        onConn={setLogConn}
+      />
     </div>
   );
 }

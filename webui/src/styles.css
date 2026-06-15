@@ -124,6 +124,17 @@ body,
   width: 100%;
   height: 100%;
 }
+.nbt-log-body {
+  flex: 1;
+  overflow-y: auto;
+  padding: 6px 10px;
+  white-space: pre-wrap;
+  line-height: 1.5;
+  font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  font-size: 12px;
+  background: #0c0c0c;
+  min-height: 0;
+}
 .nbt-log-ok {
   color: #52c41a;
 }
