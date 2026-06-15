@@ -1,0 +1,30 @@
+{
+  "file": {
+    "name": "file",
+    "version": "1.0.0",
+    "description": "File system nodes for NBT: read/write/append text, read/write JSON, list a directory, test existence, delete.",
+    "author": "vivekg",
+    "requirements": [],
+    "source": {
+      "type": "git",
+      "url": "https://github.com/node-based-tester/nbt-file-nodes",
+      "ref": null
+    },
+    "installed_at": 1781541585.031081
+  },
+  "confluence": {
+    "name": "confluence",
+    "version": "1.0.0",
+    "description": "Confluence Cloud REST API nodes: get / create / update / delete / search pages.",
+    "author": "NBT",
+    "requirements": [
+      "requests>=2.31"
+    ],
+    "source": {
+      "type": "git",
+      "url": "https://github.com/node-based-tester/nbt-confluence-nodes.git",
+      "ref": null
+    },
+    "installed_at": 1781543237.196074
+  }
+}

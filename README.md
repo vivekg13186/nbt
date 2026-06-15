@@ -78,4 +78,6 @@ class MyNode(BaseNode):
 
 Input widget types come from the defaults (bool → toggle, int/float → number, else text). Files and folders starting with `_` or `.` are ignored (so `nodes/pg/_helpers.py` can hold shared code). A broken node file never crashes the app — it's reported (with its sub-path) under *Load errors* in the palette. For listener-style nodes subclass `TriggerNode` — see `docs/CUSTOM_NODES.md` for the full guide.
 
-Bundled nodes: Set Value, Python Eval, HTTP Request, Delay, Assert Equals, Interval Trigger ⚡, File Watch Trigger ⚡.
+Bundled nodes: Set Value, Python Eval, HTTP Request, Delay, Assert Equals, Log; **Display** — Display Code (shows JSON/JS/text), Show Image (file path, URL or data URI); triggers — Interval Trigger ⚡, File Watch Trigger ⚡, File Lines ⚡ (streams a file line by line, running the flow per line).
+
+The **File** category (Read/Write/Append File, Read/Write JSON, List Directory, File Exists, Delete File) ships as a separate installable package — `packages/nbt-file-nodes/` (build `nbt-file-nodes.nbtpack`). Install it from the **Packages** view (upload the bundle or point it at a git repo).

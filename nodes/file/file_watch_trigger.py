@@ -9,7 +9,7 @@ from nbt.core.node_base import TriggerNode
 class FileWatchTrigger(TriggerNode):
     type_name = "file_watch_trigger"
     label = "File Watch Trigger"
-    category = "Triggers"
+    category = "File"
     inputs = {"path": "", "poll_seconds": 2.0}
     outputs = ["path", "event", "mtime"]
 

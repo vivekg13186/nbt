@@ -165,18 +165,25 @@ class Engine:
         self.db = db
 
     def execute(self, flow_id, flow_name, graph, environment=None,
-                env_vars=None, trigger_node=None, trigger_outputs=None):
+                env_vars=None, trigger_node=None, trigger_outputs=None,
+                log=None, media=None):
         """Run a flow graph as a DAG. Returns (execution_id, status, error).
 
         `env_vars` (dict) are injected into the context before any node:
         available as `env['key']` and, for identifier-safe keys, directly as
         `key` in expressions / `ctx['key']` in node code.
 
+        `log` is an optional callable `log(str)` used for live messages; node
+        code can call `ctx["log"]("...")` and it is forwarded here (prefixed
+        with the node name). The UI streams these to the Log tab.
+
         Listener runtime: pass `trigger_node` (the trigger's node dict) and
         `trigger_outputs`. The trigger's outputs are seeded into the context
         and only the subgraph reachable from it is executed.
         """
+        log_fn = log if callable(log) else (lambda *_a, **_k: None)
         exec_id = self.db.create_execution(flow_id, flow_name, environment)
+        self._media = media if callable(media) else None
         try:
             nodes, order, parents, children = build_dag(graph)
         except FlowValidationError as e:
@@ -225,7 +232,7 @@ class Engine:
             node = nodes[nid]
             last = _first_parent_outputs(nid, parents, node_outputs)
             ok, fatal_error, outputs = self._execute_node(
-                exec_id, node, ctx, last)
+                exec_id, node, ctx, last, log_fn)
             if not ok:
                 self.db.finish_execution(exec_id, "failed", fatal_error)
                 return exec_id, "failed", fatal_error
@@ -235,7 +242,7 @@ class Engine:
         self.db.finish_execution(exec_id, "passed", None)
         return exec_id, "passed", None
 
-    def _execute_node(self, exec_id, node, ctx, last):
+    def _execute_node(self, exec_id, node, ctx, last, log_fn=None):
         """Run one node. Returns (ok, error, outputs).
 
         `last` is the outputs of this node's first connected parent. Records
@@ -243,6 +250,12 @@ class Engine:
         """
         name = _name(node)
         ctx["last"] = last  # this node's view of the previous node's outputs
+        # node-scoped logger: ctx["log"]("hi", x) -> "<node name>: hi <x>"
+        base_log = log_fn if callable(log_fn) else (lambda *_a, **_k: None)
+        ctx["log"] = lambda *parts: base_log(
+            f"{name}: " + " ".join(str(p) for p in parts))
+        # media(path) -> served URL, or None when unavailable (e.g. headless)
+        ctx["media"] = getattr(self, "_media", None)
         t0 = time.time()
 
         def record(status, error=None, inputs=None, outputs=None):

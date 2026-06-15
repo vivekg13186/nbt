@@ -16,12 +16,15 @@ from .engine import (FlowValidationError, _name, build_dag, resolve_value,
 
 class FlowListener:
     def __init__(self, engine, flow, environment=None, env_vars=None,
-                 on_run_done=None):
+                 on_run_done=None, on_done=None, log=None, media=None):
         self.engine = engine
         self.flow = flow
         self.environment = environment
         self.env_vars = env_vars or {}
         self.on_run_done = on_run_done  # called after each triggered run
+        self.on_done = on_done          # called when the trigger self-finishes
+        self.log = log                  # node log(str) callback for the UI
+        self.media = media              # media(path) -> served URL
 
         self.active = False
         self.events = 0          # events emitted by the trigger
@@ -33,6 +36,23 @@ class FlowListener:
         self._busy = threading.Lock()
         self._instance = None
         self._tnode = None
+
+    def _finish_from_node(self):
+        """A finite trigger (e.g. File Lines at EOF) calls this to disarm
+        itself. Injected onto the trigger instance as ``self.finish``."""
+        if not self.active:
+            return
+        self.active = False
+        try:
+            if self._instance is not None:
+                self._instance.stop()
+        except Exception:
+            pass
+        if self.on_done is not None:
+            try:
+                self.on_done(self)
+            except Exception:
+                pass
 
     def _env_ctx(self):
         ctx = {}
@@ -72,6 +92,8 @@ class FlowListener:
             inputs[pname] = resolve_value(raw, ctx)
 
         self._instance = cls()
+        # let a finite trigger disarm its own listener (e.g. File Lines @ EOF)
+        self._instance.finish = self._finish_from_node
         self.active = True
         try:
             self._instance.start(self._emit, inputs, ctx)
@@ -106,7 +128,8 @@ class FlowListener:
             self.last_result = self.engine.execute(
                 self.flow["id"], self.flow["name"], self.flow["graph"],
                 environment=self.environment, env_vars=self.env_vars,
-                trigger_node=self._tnode, trigger_outputs=outputs)
+                trigger_node=self._tnode, trigger_outputs=outputs,
+                log=self.log, media=self.media)
         finally:
             self._busy.release()
 

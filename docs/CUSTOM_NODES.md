@@ -50,6 +50,7 @@ The node's work happens here.
 
 - `inputs` — the node's input values, already resolved: numbers/bools come typed, and any `{{ expression }}` templates in string inputs have been evaluated.
 - `ctx` — the execution context so far: `{node_name: outputs_dict}` for every previously executed node, plus `ctx["last"]` (outputs of the previous node).
+- `ctx["log"]` — call it to print a message to the **Log** tab (and the CLI on headless runs), e.g. `ctx["log"]("fetched", len(rows), "rows")`. The line is prefixed with the node name. (A plain `print()` goes to the server console instead, not the UI.) The same `log(...)` is also callable inside `pre` / `post` expressions and Python Eval nodes.
 - Return a dict of outputs. Returning `None` becomes `{}`; returning a non-dict is wrapped as `{"value": ...}`.
 - **Raise any exception to fail the node** — and with it, the whole flow. Use `NodeError` for clean messages:
 
@@ -194,6 +195,17 @@ get an **Update** button (re-clone), and **Remove** deletes the folder and
 unloads its nodes. Because node files execute Python on the server, only
 install packages you trust.
 
+Build a `.nbtpack` bundle from a package folder with the bundler script:
+
+```bash
+python tools/bundle_package.py path/to/your-package   # -> <name>-<version>.nbtpack
+```
+
+It validates the manifest, skips junk (`__pycache__`, dot-files, `*.pyc`),
+checks at least one node file is present, and nests the contents under a single
+`<name>/` folder so the package manager installs it correctly. See
+`packages/nbt-file-nodes/` for a complete example package.
+
 ## Rules and good practice
 
 - **One file can hold several node classes**; each needs its own `type_name`.
@@ -206,7 +218,19 @@ install packages you trust.
 
 ## Trigger (listener) nodes
 
-Subclass `TriggerNode` instead of `BaseNode` to build a node that *emits events* rather than being executed. Trigger nodes must be the start node of a flow; the flow is armed with the **Listen** button, and every `emit(...)` call runs the rest of the chain with the emitted dict as the trigger's outputs.
+Subclass `TriggerNode` instead of `BaseNode` to build a node that *emits events* rather than being executed. A trigger can stand alone or be the root of a subgraph; the flow is armed with the **Listen** button, and every `emit(...)` call runs the subgraph reachable from the trigger with the emitted dict as the trigger's outputs.
+
+**Streaming / source nodes (process every item).** Because `emit(...)` runs the
+downstream flow *synchronously*, a trigger that emits sequentially from one
+thread applies natural backpressure — the next item isn't emitted until the
+current one's run finishes, so nothing is dropped. That makes triggers a good
+fit for finite streaming sources that fan out per item (read a file line by
+line, page through an API, split a list). For a finite source, call
+`self.finish()` when you're done to **auto-disarm the listener** (`finish` is
+injected by the runtime; guard with `getattr(self, "finish", None)`). The
+bundled **File Lines** node (`nodes/file_lines_trigger.py`) is a worked example:
+it emits each line (one execution per line) and stops at EOF, or tails the file
+when `tail` is on.
 
 ```python
 # nodes/my_trigger.py

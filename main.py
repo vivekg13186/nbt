@@ -78,7 +78,8 @@ def main():
         engine = Engine(registry, db)
         exec_id, status, error = engine.execute(
             flow["id"], flow["name"], flow["graph"],
-            environment=env_name, env_vars=env_vars)
+            environment=env_name, env_vars=env_vars,
+            log=lambda m: print("    " + m))
         print(f"execution {exec_id}: {status.upper()}")
         for st in db.get_steps(exec_id):
             line = f"  [{st['status']:>7}] {st['node_name']} ({st['node_type']})"

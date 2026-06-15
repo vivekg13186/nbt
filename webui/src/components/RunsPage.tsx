@@ -9,6 +9,9 @@ import {
   Tag,
 } from "antd";
 import { RefreshCw, Trash2 } from "lucide-react";
+import CodeMirror from "@uiw/react-codemirror";
+import { json } from "@codemirror/lang-json";
+import { githubDark } from "@uiw/codemirror-theme-github";
 import { api } from "../api";
 import type { Execution, ExecutionDetail, ExecutionStep } from "../types";
 
@@ -22,6 +25,69 @@ const statusColor: Record<string, string> = {
 
 function fmt(ts: number | null) {
   return ts ? new Date(ts * 1000).toLocaleString() : "—";
+}
+
+function parseOutputs(s: ExecutionStep): Record<string, unknown> {
+  try {
+    return JSON.parse(s.outputs || "{}");
+  } catch {
+    return {};
+  }
+}
+
+// Render a step's detail. Display nodes get a rich view; everything else
+// shows raw inputs/outputs.
+function renderStepBody(s: ExecutionStep) {
+  const out = parseOutputs(s);
+
+  if (s.node_type === "display_code" && typeof out.content === "string") {
+    const lang = String(out.language || "text");
+    return (
+      <div>
+        <Tag style={{ marginBottom: 6 }}>{lang}</Tag>
+        <div style={{ border: "1px solid var(--nbt-border)", borderRadius: 6 }}>
+          <CodeMirror
+            value={out.content as string}
+            theme={githubDark}
+            editable={false}
+            extensions={lang === "json" ? [json()] : []}
+            maxHeight="400px"
+          />
+        </div>
+      </div>
+    );
+  }
+
+  if (s.node_type === "show_image" && typeof out.src === "string") {
+    return (
+      <div style={{ textAlign: "center", padding: 8 }}>
+        <img
+          src={out.src as string}
+          alt="output"
+          style={{
+            maxWidth: "100%",
+            maxHeight: 420,
+            border: "1px solid var(--nbt-border)",
+            borderRadius: 6,
+            imageRendering: "auto",
+          }}
+        />
+        {out.format ? (
+          <div style={{ fontSize: 11, color: "var(--nbt-muted)", marginTop: 4 }}>
+            {String(out.format)}
+          </div>
+        ) : null}
+      </div>
+    );
+  }
+
+  return (
+    <pre style={{ fontSize: 11, margin: 0, whiteSpace: "pre-wrap" }}>
+      inputs: {s.inputs || "{}"}
+      {"\n"}outputs: {s.outputs || "{}"}
+      {s.error ? "\nerror: " + s.error : ""}
+    </pre>
+  );
 }
 
 export default function RunsPage() {
@@ -177,13 +243,7 @@ export default function RunsPage() {
               dataSource={detail.steps}
               pagination={false}
               expandable={{
-                expandedRowRender: (s: ExecutionStep) => (
-                  <pre style={{ fontSize: 11, margin: 0 }}>
-                    inputs: {s.inputs || "{}"}
-                    {"\n"}outputs: {s.outputs || "{}"}
-                    {s.error ? "\nerror: " + s.error : ""}
-                  </pre>
-                ),
+                expandedRowRender: (s: ExecutionStep) => renderStepBody(s),
               }}
             />
           </>

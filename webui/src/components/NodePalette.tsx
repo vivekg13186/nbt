@@ -2,12 +2,21 @@ import { useMemo, useState } from "react";
 import { App as AntApp, Empty, Input, Tag } from "antd";
 import {
   Box,
+  Braces,
   CircleCheckBig,
   Clock,
   Code,
+  FileCheck,
+  FilePlus,
   FileSearch,
+  FileText,
+  Folder,
   Globe,
+  Image,
+  ScrollText,
   Search,
+  SquareCode,
+  Trash2,
   Variable,
   Zap,
 } from "lucide-react";
@@ -30,6 +39,27 @@ function iconFor(m: NodeMeta) {
       return <CircleCheckBig size={16} />;
     case "file_watch_trigger":
       return <FileSearch size={16} />;
+    case "log":
+      return <ScrollText size={16} />;
+    case "read_file":
+      return <FileText size={16} />;
+    case "write_file":
+      return <FilePlus size={16} />;
+    case "append_file":
+      return <FilePlus size={16} />;
+    case "read_json":
+    case "write_json":
+      return <Braces size={16} />;
+    case "list_dir":
+      return <Folder size={16} />;
+    case "file_exists":
+      return <FileCheck size={16} />;
+    case "delete_file":
+      return <Trash2 size={16} />;
+    case "display_code":
+      return <SquareCode size={16} />;
+    case "show_image":
+      return <Image size={16} />;
     default:
       return <Box size={16} />;
   }

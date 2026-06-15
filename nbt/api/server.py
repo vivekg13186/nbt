@@ -12,16 +12,22 @@ and point the Vite dev server (webui/) at it.
 from __future__ import annotations
 
 import asyncio
+import functools
 import json
+import shutil
+import tempfile
 import threading
 import time
+import uuid
 from collections import deque
+from pathlib import Path
 from typing import Any, Optional
 
 from fastapi import (FastAPI, File, HTTPException, UploadFile, WebSocket,
                      WebSocketDisconnect)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.concurrency import run_in_threadpool
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from ..core.listener import FlowListener
@@ -78,27 +84,46 @@ class ListenerManager:
         self.logbus = logbus
         self.listeners: dict[str, FlowListener] = {}
         self._lock = threading.Lock()
+        self._media_register = None  # set by create_app once media dir exists
 
     def start(self, flow: dict, env_name=None, env_vars=None) -> FlowListener:
         fid = flow["id"]
+
+        def _done(lst: FlowListener):
+            res = lst.last_result or (None, "?", None)
+            exec_id, status, _ = res
+            self.logbus.emit(
+                f"[listen] {flow['name']}: event -> {status} "
+                f"(exec {exec_id})",
+                level="ok" if status == "passed" else "error")
+
+        def _finished(lst: FlowListener):
+            # a finite trigger (e.g. File Lines at EOF) self-disarmed
+            with self._lock:
+                self.listeners.pop(fid, None)
+            self.logbus.emit(
+                f"[listen] '{flow['name']}' finished ({lst.runs} runs)",
+                level="ok")
+
         with self._lock:
             if fid in self.listeners:
                 raise ValueError("flow is already listening")
-
-            def _done(lst: FlowListener):
-                res = lst.last_result or (None, "?", None)
-                exec_id, status, _ = res
-                self.logbus.emit(
-                    f"[listen] {flow['name']}: event -> {status} "
-                    f"(exec {exec_id})",
-                    level="ok" if status == "passed" else "error")
-
-            listener = FlowListener(self.engine, flow, env_name, env_vars,
-                                    on_run_done=_done)
-            listener.start()  # raises on invalid flow
+            listener = FlowListener(
+                self.engine, flow, env_name, env_vars,
+                on_run_done=_done, on_done=_finished,
+                log=lambda m: self.logbus.emit("    " + m, level="info"),
+                media=self._media_register)
             self.listeners[fid] = listener
-            self.logbus.emit(f"[listen] armed '{flow['name']}'", level="ok")
-            return listener
+        # start() outside the lock: a finite trigger can finish (and call
+        # _finished, which needs the lock) before start() returns.
+        try:
+            listener.start()  # raises on invalid flow
+        except Exception:
+            with self._lock:
+                self.listeners.pop(fid, None)
+            raise
+        self.logbus.emit(f"[listen] armed '{flow['name']}'", level="ok")
+        return listener
 
     def stop(self, flow_id: str) -> bool:
         with self._lock:
@@ -211,11 +236,25 @@ def create_app(db, registry) -> FastAPI:
     listeners = ListenerManager(engine, logbus)
     packages = PackageManager(registry.nodes_dir, registry)
 
+    # Served media folder (temp): display nodes copy images here and reference
+    # them by URL (/api/media/<file>) instead of inlining base64.
+    media_dir = Path(tempfile.mkdtemp(prefix="nbt-media-"))
+
+    def media_register(path: str) -> str:
+        src = Path(path)
+        name = f"{uuid.uuid4().hex}{src.suffix.lower()}"
+        shutil.copyfile(src, media_dir / name)
+        return f"/api/media/{name}"
+
+    listeners._media_register = media_register
+
     app = FastAPI(title="NBT API", version="1.0")
     app.add_middleware(
         CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
         allow_headers=["*"],
     )
+    app.mount("/api/media", StaticFiles(directory=str(media_dir)),
+              name="media")
 
     @app.on_event("startup")
     async def _bind():
@@ -312,9 +351,11 @@ def create_app(db, registry) -> FastAPI:
         env_name, env_vars = _env_lookup(body.environment)
         logbus.emit(f"[run] '{flow['name']}'"
                     + (f" (env {env_name})" if env_name else ""))
+        node_log = lambda m: logbus.emit("    " + m, level="info")
         exec_id, status, error = await run_in_threadpool(
-            engine.execute, flow["id"], flow["name"], flow["graph"],
-            env_name, env_vars)
+            functools.partial(
+                engine.execute, flow["id"], flow["name"], flow["graph"],
+                env_name, env_vars, log=node_log, media=media_register))
         for st in db.get_steps(exec_id):
             line = f"  [{st['status']:>7}] {st['node_name']} ({st['node_type']})"
             logbus.emit(line,
