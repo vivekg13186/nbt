@@ -29,6 +29,7 @@ export default function GraphEditor() {
     const g = new NbtGraph(canvasRef.current, nodes);
     gRef.current = g;
     activeGraphRef.current = g;
+    activeGraphRef.flowId = null;
     g.onEdit = (req) => setEdit(req);
     g.setTheme(true);
     g.resize();
@@ -44,22 +45,39 @@ export default function GraphEditor() {
       window.removeEventListener("resize", onWin);
       g.destroy();
       gRef.current = null;
-      if (activeGraphRef.current === g) activeGraphRef.current = null;
+      if (activeGraphRef.current === g) {
+        activeGraphRef.current = null;
+        activeGraphRef.flowId = null;
+      }
     };
   }, [nodes]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  // Load the active flow's graph whenever it changes.
+  // Load the active flow's graph whenever it changes (and clear when none).
   useEffect(() => {
     const g = gRef.current;
-    if (!g || !activeFlowId || loadedFlow.current === activeFlowId) return;
+    if (!g) return;
+
+    // no flow open (e.g. all tabs closed): clear the canvas
+    if (!activeFlowId) {
+      g.importGraph({ nodes: [], links: [] });
+      loadedFlow.current = null;
+      activeGraphRef.flowId = null;
+      return;
+    }
+    if (loadedFlow.current === activeFlowId) return;
+
     let cancelled = false;
+    const target = activeFlowId;
+    // canvas no longer matches a saved flow while loading -> block saves
+    activeGraphRef.flowId = null;
     api
-      .getFlow(activeFlowId)
+      .getFlow(target)
       .then((flow) => {
         if (cancelled) return;
         g.importGraph(flow.graph);
         g.resize();
-        loadedFlow.current = activeFlowId;
+        loadedFlow.current = target;
+        activeGraphRef.flowId = target; // canvas now shows this flow
       })
       .catch((e) => message.error((e as Error).message));
     return () => {

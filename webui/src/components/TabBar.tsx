@@ -24,9 +24,14 @@ export default function TabBar() {
   const nameOf = (id: string) =>
     flows.find((f) => f.id === id)?.name ?? "(deleted)";
 
+  // Save the graph the canvas is CURRENTLY displaying (activeGraphRef.flowId),
+  // never the store's activeFlowId — which may already point at a different
+  // tab while this one is still loading.
   async function saveActiveGraph() {
-    if (activeFlowId && activeGraphRef.current) {
-      await api.saveGraph(activeFlowId, activeGraphRef.current.exportGraph());
+    const g = activeGraphRef.current;
+    const fid = activeGraphRef.flowId;
+    if (g && fid) {
+      await api.saveGraph(fid, g.exportGraph());
     }
   }
 
@@ -35,7 +40,7 @@ export default function TabBar() {
     try {
       const name = nameOf(id);
       const graph =
-        id === activeFlowId && activeGraphRef.current
+        id === activeGraphRef.flowId && activeGraphRef.current
           ? activeGraphRef.current.exportGraph()
           : (await api.getFlow(id)).graph;
       const blob = new Blob([JSON.stringify(graph, null, 2)], {
@@ -122,7 +127,7 @@ export default function TabBar() {
         const name = nameOf(id);
         if (key === "save") {
           try {
-            if (id === activeFlowId) await saveActiveGraph();
+            if (id === activeGraphRef.flowId) await saveActiveGraph();
             message.success(`Saved "${name}"`);
           } catch (e) {
             message.error((e as Error).message);

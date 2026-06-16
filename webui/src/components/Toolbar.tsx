@@ -31,9 +31,13 @@ export default function Toolbar() {
   const [busy, setBusy] = useState(false);
   const flow = flows.find((f) => f.id === activeFlowId);
 
+  // Save the flow currently shown on the canvas (not a stale activeFlowId
+  // mid-switch), to avoid overwriting another workflow.
   async function save() {
-    if (!activeFlowId || !activeGraphRef.current) return;
-    await api.saveGraph(activeFlowId, activeGraphRef.current.exportGraph());
+    const g = activeGraphRef.current;
+    const fid = activeGraphRef.flowId;
+    if (!g || !fid) return;
+    await api.saveGraph(fid, g.exportGraph());
   }
 
   async function onSave() {
