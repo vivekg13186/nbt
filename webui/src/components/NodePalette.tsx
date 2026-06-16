@@ -18,6 +18,7 @@ import {
   SquareCode,
   Trash2,
   Variable,
+  Workflow,
   Zap,
 } from "lucide-react";
 import { useStore } from "../store";
@@ -60,6 +61,8 @@ function iconFor(m: NodeMeta) {
       return <SquareCode size={16} />;
     case "show_image":
       return <Image size={16} />;
+    case "subflow":
+      return <Workflow size={16} />;
     default:
       return <Box size={16} />;
   }

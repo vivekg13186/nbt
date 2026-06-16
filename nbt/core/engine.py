@@ -175,7 +175,8 @@ class Engine:
 
     def execute(self, flow_id, flow_name, graph, environment=None,
                 env_vars=None, trigger_node=None, trigger_outputs=None,
-                log=None, media=None):
+                log=None, media=None, seed_vars=None, out_collector=None,
+                call_stack=None):
         """Run a flow graph as a DAG. Returns (execution_id, status, error).
 
         `env_vars` (dict) are injected into the context before any node:
@@ -199,12 +200,26 @@ class Engine:
             self.db.finish_execution(exec_id, "error", str(e))
             return exec_id, "error", str(e)
 
+        reserved = ("last", "ctx", "env", "ins", "log", "media", "run_flow")
         ctx = {}
         if env_vars:
             ctx["env"] = dict(env_vars)
             for k, v in env_vars.items():
-                if isinstance(k, str) and k not in ("last", "ctx", "env"):
+                if isinstance(k, str) and k not in reserved:
                     ctx[k] = v
+        # subflow inputs: seed as named variables (override env)
+        if seed_vars:
+            for k, v in seed_vars.items():
+                if isinstance(k, str) and k not in reserved:
+                    ctx[k] = v
+
+        # published alias collector (used when this run is a subflow)
+        published = out_collector if out_collector is not None else {}
+
+        # ctx["run_flow"](name, vars) runs another saved flow as a subflow
+        stack = list(call_stack or [flow_name])
+        ctx["run_flow"] = lambda name, vars=None: self._run_subflow(
+            name, environment, env_vars, vars or {}, stack, log_fn, self._media)
 
         node_outputs = {}  # id -> outputs, used to resolve each node's `last`
 
@@ -244,7 +259,7 @@ class Engine:
                    if p in node_outputs]
             last = ins[0] if ins else {}
             ok, fatal_error, outputs = self._execute_node(
-                exec_id, node, ctx, last, ins, log_fn)
+                exec_id, node, ctx, last, ins, log_fn, published)
             if not ok:
                 self.db.finish_execution(exec_id, "failed", fatal_error)
                 return exec_id, "failed", fatal_error
@@ -254,7 +269,35 @@ class Engine:
         self.db.finish_execution(exec_id, "passed", None)
         return exec_id, "passed", None
 
-    def _execute_node(self, exec_id, node, ctx, last, ins=None, log_fn=None):
+    def _run_subflow(self, name, environment, env_vars, seed_vars, stack,
+                     log_fn, media):
+        """Run another saved flow by name (used by ctx['run_flow']).
+
+        Returns {execution_id, status, error, outputs} where `outputs` is the
+        subflow's published output aliases. Guards against recursion.
+        """
+        name = str(name or "").strip()
+        if not name:
+            return {"execution_id": None, "status": "error",
+                    "error": "subflow name is required", "outputs": {}}
+        if name in stack:
+            chain = " -> ".join(stack + [name])
+            return {"execution_id": None, "status": "error",
+                    "error": f"recursive subflow call: {chain}", "outputs": {}}
+        flow = self.db.get_flow_by_name(name)
+        if flow is None:
+            return {"execution_id": None, "status": "error",
+                    "error": f"subflow not found: {name!r}", "outputs": {}}
+        collector = {}
+        exec_id, status, error = self.execute(
+            flow["id"], flow["name"], flow["graph"], environment=environment,
+            env_vars=env_vars, seed_vars=seed_vars, out_collector=collector,
+            call_stack=stack + [name], log=log_fn, media=media)
+        return {"execution_id": exec_id, "status": status, "error": error,
+                "outputs": collector}
+
+    def _execute_node(self, exec_id, node, ctx, last, ins=None, log_fn=None,
+                      published=None):
         """Run one node. Returns (ok, error, outputs).
 
         `last` is the outputs of this node's first connected parent and `ins`
@@ -342,5 +385,7 @@ class Engine:
             alias = str(alias).strip()
             if alias and alias != "last" and oname in outputs:
                 ctx[alias] = outputs[oname]
+                if published is not None:  # expose to a parent subflow caller
+                    published[alias] = outputs[oname]
         record("passed", None, inputs=inputs, outputs=outputs)
         return True, None, outputs

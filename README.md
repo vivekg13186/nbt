@@ -100,6 +100,10 @@ class MyNode(BaseNode):
 
 Input widget types come from the defaults (bool → toggle, int/float → number, else text). Files and folders starting with `_` or `.` are ignored (so `nodes/pg/_helpers.py` can hold shared code). A broken node file never crashes the app — it's reported (with its sub-path) under *Load errors* in the palette. For listener-style nodes subclass `TriggerNode` — see `docs/CUSTOM_NODES.md` for the full guide.
 
-Bundled nodes: Set Value, Python Eval, HTTP Request, Delay, Assert Equals, Log; **Display** — Display Code (shows JSON/JS/text), Show Image (file path, URL or data URI); triggers — Interval Trigger ⚡, File Watch Trigger ⚡, File Lines ⚡ (streams a file line by line, running the flow per line).
+Bundled nodes: Set Value, Python Eval, HTTP Request, Delay, Assert Equals, Log, Subflow (run another saved flow as a step); **Display** — Display Code (shows JSON/JS/text), Show Image (file path, URL or data URI); triggers — Interval Trigger ⚡, File Watch Trigger ⚡, File Lines ⚡ (streams a file line by line, running the flow per line).
+
+### Subflows
+
+The **Subflow** node runs another saved flow as a single step. Give it the target flow's `name` and an `inputs` JSON object (seeded as named variables in the subflow). Outputs: `output` (a dict of all the subflow's published output aliases — alias it to e.g. `sub`, then read `sub['result']`), plus `execution_id` and `status`. The subflow runs as its own recorded execution (visible in Executions), under the same environment, and recursive calls are detected and fail cleanly. Node code can call this directly via `ctx["run_flow"](name, vars)`.
 
 The **File** category (Read/Write/Append File, Read/Write JSON, List Directory, File Exists, Delete File) ships as a separate installable package — `packages/nbt-file-nodes/` (build `nbt-file-nodes.nbtpack`). Install it from the **Packages** view (upload the bundle or point it at a git repo).
