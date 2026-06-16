@@ -183,13 +183,18 @@ class Engine:
         available as `env['key']` and, for identifier-safe keys, directly as
         `key` in expressions / `ctx['key']` in node code.
 
-        `log` is an optional callable `log(str)` used for live messages; node
-        code can call `ctx["log"]("...")` and it is forwarded here (prefixed
-        with the node name). The UI streams these to the Log tab.
+        Optional callables, exposed to nodes via the context:
+          * `log(str)`        -> `ctx["log"]` (streamed to the Log tab)
+          * `media(path)`     -> `ctx["media"]` (publish a file, returns a URL)
+        and `ctx["run_flow"](name, vars)` runs another flow as a subflow.
 
         Listener runtime: pass `trigger_node` (the trigger's node dict) and
         `trigger_outputs`. The trigger's outputs are seeded into the context
         and only the subgraph reachable from it is executed.
+
+        Subflow runtime: `seed_vars` (dict) are seeded as named variables;
+        `out_collector` (dict) is filled with the published output aliases;
+        `call_stack` carries the chain of flow names for recursion detection.
         """
         log_fn = log if callable(log) else (lambda *_a, **_k: None)
         exec_id = self.db.create_execution(flow_id, flow_name, environment)

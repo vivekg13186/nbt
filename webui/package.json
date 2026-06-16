@@ -16,6 +16,8 @@
     "@codemirror/lang-javascript": "^6.2.5",
     "@codemirror/lang-json": "^6.0.1",
     "@uiw/codemirror-theme-github": "^4.23.0",
+    "@uiw/codemirror-theme-material": "^4.25.10",
+    "@uiw/codemirror-theme-vscode": "^4.25.10",
     "@uiw/react-codemirror": "^4.23.0",
     "@xterm/addon-fit": "^0.11.0",
     "@xterm/xterm": "^6.0.0",

@@ -11,7 +11,7 @@ import {
 import { RefreshCw, Trash2 } from "lucide-react";
 import CodeMirror from "@uiw/react-codemirror";
 import { json } from "@codemirror/lang-json";
-import { githubDark } from "@uiw/codemirror-theme-github";
+import { vscodeDark } from "@uiw/codemirror-theme-vscode";
 import { api } from "../api";
 import type { Execution, ExecutionDetail, ExecutionStep } from "../types";
 
@@ -48,7 +48,7 @@ function renderStepBody(s: ExecutionStep) {
         <div style={{ border: "1px solid var(--nbt-border)", borderRadius: 6 }}>
           <CodeMirror
             value={out.content as string}
-            theme={githubDark}
+            theme={vscodeDark}
             editable={false}
             extensions={lang === "json" ? [json()] : []}
             maxHeight="400px"

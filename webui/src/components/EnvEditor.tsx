@@ -3,7 +3,7 @@ import { App as AntApp, Button, Empty, Input, Space, Tag } from "antd";
 import { Save } from "lucide-react";
 import CodeMirror from "@uiw/react-codemirror";
 import { json } from "@codemirror/lang-json";
-import { githubDark } from "@uiw/codemirror-theme-github";
+import { vscodeDark } from "@uiw/codemirror-theme-vscode";
 import { useStore } from "../store";
 import { api } from "../api";
 
@@ -107,7 +107,7 @@ export default function EnvEditor() {
         <CodeMirror
           value={text}
           height="calc(100vh - 240px)"
-          theme={githubDark}
+          theme={vscodeDark}
           extensions={[json()]}
           onChange={validate}
         />

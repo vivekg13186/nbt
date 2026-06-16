@@ -1,6 +1,6 @@
 # Writing Custom Nodes
 
-NBT discovers nodes automatically: any `.py` file in the `nodes/` folder containing a subclass of `BaseNode` is loaded at startup (or via *Reload nodes/* in the app). No registration code is needed — drop the file in and the node appears in the palette.
+NBT discovers nodes automatically: any `.py` file under the `nodes/` folder (scanned recursively) containing a subclass of `BaseNode` is loaded at server start and re-scanned whenever a package is installed/removed. No registration code is needed — drop the file in and the node appears in the palette.
 
 ## Minimal example
 
@@ -49,8 +49,13 @@ So `inputs = {"url": "", "retries": 3, "strict": False}` renders a text field, a
 The node's work happens here.
 
 - `inputs` — the node's input values, already resolved: numbers/bools come typed, and any `{{ expression }}` templates in string inputs have been evaluated.
-- `ctx` — the execution context so far: `{node_name: outputs_dict}` for every previously executed node, plus `ctx["last"]` (outputs of the previous node).
-- `ctx["log"]` — call it to print a message to the **Log** tab (and the CLI on headless runs), e.g. `ctx["log"]("fetched", len(rows), "rows")`. The line is prefixed with the node name. (A plain `print()` goes to the server console instead, not the UI.) The same `log(...)` is also callable inside `pre` / `post` expressions and Python Eval nodes.
+- `ctx` — the execution context so far: `{node_name: outputs_dict}` for every already-executed node, plus:
+  - `ctx["last"]` — outputs of this node's first connected parent
+  - `ctx["ins"]` — list of outputs of all connected parents, in order (for join nodes)
+  - `ctx["env"]` — the active environment's variables (also available as plain names)
+  - `ctx["log"](...)` — print to the **Log** tab (and the CLI on headless runs); prefixed with the node name. A plain `print()` goes to the server console, not the UI.
+  - `ctx["media"](path)` — copy a local file into the server's media folder and return a `/api/media/...` URL (used by the Show Image node)
+  - `ctx["run_flow"](name, vars)` — run another saved flow as a subflow; returns `{execution_id, status, error, outputs}`
 - Return a dict of outputs. Returning `None` becomes `{}`; returning a non-dict is wrapped as `{"value": ...}`.
 - **Raise any exception to fail the node** — and with it, the whole flow. Use `NodeError` for clean messages:
 
@@ -77,16 +82,18 @@ def check(self, outputs, inputs, ctx):
 
 ## What happens at execution time
 
-For each node in the chain, in order:
+The flow is a **DAG** (directed acyclic graph). It is validated (no cycles; multiple roots, branches, joins and disconnected pieces are allowed), topologically sorted, and each node runs once in that order. Before a node runs, `ctx["last"]` is set to its first connected parent's outputs and `ctx["ins"]` to all parents' outputs. Then, per node:
 
-1. **Condition** (set per-node in the editor) is evaluated. Falsy → node is **skipped**, flow continues. An error in the expression fails the flow.
+1. **`pre`** (set per-node in the editor) is evaluated. Falsy → node is **skipped** (its descendants still run); an error in the expression fails the flow.
 2. **Inputs are resolved** — `{{ expression }}` templates in string inputs are evaluated against `ctx`. If the *entire* value is one template (`{{ upper['value'] }}`), the raw object is passed (not a string), so dicts/numbers flow between nodes intact.
 3. **`run()`** executes. Raising fails the node.
 4. **`check()`** hook runs. Raising fails the node.
-5. **Assert expression** (set per-node in the editor) is evaluated with `last` bound to this node's own outputs. Falsy or raising fails the node.
-6. Outputs are stored: `ctx[node_name] = outputs` and `ctx["last"] = outputs`.
+5. **`post`** expression (set per-node) is evaluated with `last` bound to this node's own outputs. Falsy or raising fails the node.
+6. Outputs are stored as `ctx[node_name] = outputs`, and any aliased outputs are published as flat context variables.
 
 Any failure stops the flow immediately and the execution is recorded as FAILED with the step's error, inputs and traceback in the Executions panel.
+
+On **Listen**, only the subgraph reachable from the trigger runs (same topological execution), once per emitted event — see *Trigger (listener) nodes* below.
 
 ## Expressions cheat sheet
 
@@ -226,12 +233,13 @@ downstream flow *synchronously*, a trigger that emits sequentially from one
 thread applies natural backpressure — the next item isn't emitted until the
 current one's run finishes, so nothing is dropped. That makes triggers a good
 fit for finite streaming sources that fan out per item (read a file line by
-line, page through an API, split a list). For a finite source, call
+line, emit array elements, page through an API). For a finite source, call
 `self.finish()` when you're done to **auto-disarm the listener** (`finish` is
-injected by the runtime; guard with `getattr(self, "finish", None)`). The
-bundled **File Lines** node (`nodes/file_lines_trigger.py`) is a worked example:
-it emits each line (one execution per line) and stops at EOF, or tails the file
-when `tail` is on.
+injected by the runtime; guard with `getattr(self, "finish", None)`). Worked
+examples: **File Lines** (`nodes/file_lines_trigger.py`) emits each line and
+stops at EOF (or tails when `tail` is on), and **Emit Array**
+(`nodes/emit_array.py`) emits each element of an array — both one execution per
+item.
 
 ```python
 # nodes/my_trigger.py
@@ -272,3 +280,7 @@ Notes: `ctx` in `start()` contains the active environment's variables (and `{{ }
 | `nodes/http_request.py` | error handling, typed inputs, `NodeError` |
 | `nodes/delay.py` | float input, side-effect node |
 | `nodes/assert_equals.py` | the `check()` assert hook |
+| `nodes/log_node.py` | using `ctx["log"]` |
+| `nodes/subflow.py` | calling another flow via `ctx["run_flow"]` |
+| `nodes/file_lines_trigger.py` | a finite streaming trigger with `finish()` |
+| `nodes/emit_array.py` | emitting each element of an array |

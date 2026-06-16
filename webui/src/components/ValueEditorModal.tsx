@@ -4,7 +4,7 @@ import CodeMirror from "@uiw/react-codemirror";
 import { json } from "@codemirror/lang-json";
 import { html } from "@codemirror/lang-html";
 import { javascript } from "@codemirror/lang-javascript";
-import { githubDark } from "@uiw/codemirror-theme-github";
+import { vscodeDark } from "@uiw/codemirror-theme-vscode";
 import type { Extension } from "@codemirror/state";
 
 type Lang = "auto" | "json" | "html" | "javascript" | "text";
@@ -88,7 +88,7 @@ export default function ValueEditorModal({
         <CodeMirror
           value={value}
           height="58vh"
-          theme={githubDark}
+          theme={vscodeDark}
           extensions={extFor(effective)}
           onChange={setValue}
         />

@@ -55,9 +55,11 @@ The database is created fresh on first launch (Demo Flow seeded).
 
 ## Using the editor
 
-The tab bar holds open workflows (right-click a tab for Save / Rename / Duplicate / Close / Delete); the toolbar has the active workflow name, Add node, the environment picker, and Save / Listen / Run. The left rail switches between Workflows, Nodes, Packages, Environments, Listeners and Executions. The **Packages** view installs groups of custom nodes from a git URL or a `.nbtpack`/`.zip` bundle (see `docs/CUSTOM_NODES.md`). To add a node, use the Nodes palette, the toolbar's Add node, or right-click the canvas. Drag from a node's `out` pin to another node's `in` pin to connect; the canvas pans and zooms with the mouse. A toggleable shell sits at the bottom. The Executions page lists runs; click one for step inputs/outputs/error detail.
+The UI is dark-mode only. The tab bar holds open workflows (right-click a tab for Save / Rename / Duplicate / Close / Delete / Export JSON), with buttons to add, import (`.json`) and export workflows. The toolbar has the active workflow name, Add node, the environment picker, Save / Listen / Run, and toggles for the bottom panel. The left rail switches between Workflows, Nodes, Packages, Environments, Listeners and Executions. The **Packages** view installs groups of custom nodes from a git URL or a `.nbtpack`/`.zip` bundle (see `docs/CUSTOM_NODES.md`).
 
-Each node has its declared **inputs**, a **pre** expression (falsy → node is skipped) and a **post** expression (falsy → node fails). Edit a node's name via its title (right-click node → Title). Each declared output gets an alias box (`→ value`): type a variable name (e.g. `casenumber`) and that output is published flat into the context — later nodes can use `casenumber` / `{{ casenumber }}` / `ctx['casenumber']`. Use `last` for the first connected parent's outputs.
+To add a node use the Nodes palette, the toolbar's Add node, or right-click the canvas. Drag from a node's `out` pin to another node's `in` pin to connect; a node grows extra input pins as you connect more parents (joins). The canvas pans/zooms with the mouse and is HiDPI-aware. The bottom panel has two tabs — an interactive **Shell** (a real PTY into the server) and a **Log** stream of run/listener output — toggled from the toolbar. The Executions page lists runs; click one for step inputs/outputs/error detail (Display nodes render their content here). You can also drag a workflow `.json` (imports as a new workflow) or a `.nbtpack`/`.zip` (installs as a package) anywhere onto the window.
+
+Each node has its declared **inputs**, a **pre** expression (falsy → node is skipped) and a **post** expression (falsy → node fails). Every text field has a code-editor dialog (the `</>`-style icon) for large values with JSON/HTML/JS highlighting. Edit a node's name via its title (right-click node → Title). Each declared output gets an alias box: type a variable name (e.g. `casenumber`) and that output is published flat into the context — later nodes can use `casenumber` / `{{ casenumber }}` / `ctx['casenumber']`. Use `last` for the first connected parent's outputs and `ins` for the list of all parents' outputs (joins).
 
 ## Execution rules (DAG)
 
@@ -65,9 +67,9 @@ A flow is a directed acyclic graph: nodes may have multiple inputs and outputs, 
 
 ## Trigger (listener) flows
 
-A flow can contain a **trigger node** (marked ⚡) — e.g. *Interval Trigger* (emit every N seconds) or *File Watch Trigger* (emit when a file changes). A trigger need not be connected to anything; it can stand alone or be the root of a subgraph. Trigger flows aren't Run; press **Listen** to arm the trigger. Every emitted event executes the subgraph reachable from the trigger with the trigger's outputs available downstream, and each event becomes its own recorded execution. The trigger's *pre* field is an event filter — falsy events are ignored without creating an execution.
+A flow can contain a **trigger node** (marked ⚡) — *Interval Trigger* (emit every N seconds), *File Watch Trigger* (emit when a file changes), *File Lines* (emit each line of a file), or *Emit Array* (emit each element of an array). A trigger need not be connected to anything; it can stand alone or be the root of a subgraph (exactly one trigger per flow). Trigger flows aren't Run; press **Listen** to arm the trigger. Every emitted event executes the subgraph reachable from the trigger (in topological order, same as Run) with the trigger's outputs seeded into the context, and each event becomes its own recorded execution. The trigger's *pre* field is an event filter — falsy events are ignored without creating an execution.
 
-Multiple flows can listen at once (one listener per flow, each on a snapshot of its graph taken when armed). The **Listen** button toggles the *current* flow; **Listeners: N** opens a manager with live stats (events / runs / filtered / busy-skips / last result) and per-listener Stop buttons, plus Stop All. Listeners live in the server process, so they keep firing with no browser tab open. Events arriving while that flow's previous run is still in progress are dropped and counted.
+Multiple flows can listen at once (one listener per flow, each on a snapshot of its graph taken when armed). The toolbar's **Listen** button arms/stops the current flow; the **Listeners** view is a live table with per-listener stats (events / runs / filtered / busy-skips / last result) and Stop / Stop All. `emit()` runs the flow synchronously, so events arriving while the previous run is still in progress are dropped and counted (busy-skips) — sequential sources like File Lines and Emit Array therefore never drop. Finite sources (File Lines at EOF, Emit Array after the last element) auto-stop their listener. Listeners live in the server process, so they keep firing with no browser tab open.
 
 ## Environments
 
@@ -75,7 +77,7 @@ Environments are named sets of variables (e.g. `staging`, `prod`) managed in the
 
 ## Expressions and templating
 
-The `pre` / `post` fields and `{{ ... }}` templates inside string inputs are Python expressions evaluated against the context: `last` is the previous node's outputs, output aliases and environment variables are available as plain names, and `ctx` is the whole dict. Example: input `{{ upper }}`, post `last['status'] == 200`.
+The `pre` / `post` fields and `{{ ... }}` templates inside string inputs are Python expressions evaluated against the context: `last` is the first connected parent's outputs, `ins` is the list of all parents' outputs, output aliases and environment variables are available as plain names, and `ctx` is the whole dict. Helpers `log(...)` (write to the Log tab) and `run_flow(name, vars)` (run a subflow) are also callable. Example: input `{{ upper }}`, post `last['status'] == 200`.
 
 ## Custom nodes
 
@@ -100,7 +102,7 @@ class MyNode(BaseNode):
 
 Input widget types come from the defaults (bool → toggle, int/float → number, else text). Files and folders starting with `_` or `.` are ignored (so `nodes/pg/_helpers.py` can hold shared code). A broken node file never crashes the app — it's reported (with its sub-path) under *Load errors* in the palette. For listener-style nodes subclass `TriggerNode` — see `docs/CUSTOM_NODES.md` for the full guide.
 
-Bundled nodes: Set Value, Python Eval, HTTP Request, Delay, Assert Equals, Log, Subflow (run another saved flow as a step); **Display** — Display Code (shows JSON/JS/text), Show Image (file path, URL or data URI); triggers — Interval Trigger ⚡, File Watch Trigger ⚡, File Lines ⚡ (streams a file line by line, running the flow per line).
+Bundled nodes: Set Value, Python Eval, HTTP Request, Delay, Assert Equals, Log, Subflow (run another saved flow as a step); **Display** — Display Code (shows JSON/JS/text), Show Image (file path, URL or data URI); triggers — Interval Trigger ⚡, File Watch Trigger ⚡, File Lines ⚡ (streams a file line by line, running the flow per line), Emit Array ⚡ (emits each element of an array, running the flow per element).
 
 ### Subflows
 
