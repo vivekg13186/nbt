@@ -30,6 +30,81 @@ function freeInputSlot(node: any): number {
   return node.inputs.length - 1;
 }
 
+// A custom LiteGraph widget: a value box with an inline ✎ icon. Clicking it
+// opens the code-editor dialog (controller.onEdit). Replaces the plain text
+// widget + separate edit button. Value lives on widget.value (so export /
+// import keep working unchanged).
+function editWidget(
+  controller: NbtGraph,
+  label: string,
+  initial: string,
+  placeholder = "",
+  variant: "input" | "output" = "input",
+) {
+  return {
+    type: "nbt_edit",
+    name: label,
+    value: initial,
+    draw(this: any, ctx: any, _node: any, width: number, y: number, H: number) {
+      const m = 15;
+      const iconW = 22;
+      // box
+      ctx.strokeStyle = LiteGraph.WIDGET_OUTLINE_COLOR;
+      ctx.fillStyle = LiteGraph.WIDGET_BGCOLOR;
+      ctx.beginPath();
+      ctx.roundRect(m, y, width - m * 2, H, [H * 0.5]);
+      ctx.fill();
+      ctx.stroke();
+      ctx.save();
+      ctx.beginPath();
+      ctx.rect(m, y, width - m * 2, H);
+      ctx.clip();
+      // label
+      ctx.fillStyle = LiteGraph.WIDGET_SECONDARY_TEXT_COLOR;
+      ctx.textAlign = "left";
+      ctx.fillText(label, m * 2, y + H * 0.7);
+      // value (truncated, single line)
+      const raw = String(this.value ?? "");
+      const shown = raw
+        ? raw.replace(/\s+/g, " ").slice(0, 28)
+        : placeholder;
+      ctx.fillStyle = raw
+        ? LiteGraph.WIDGET_TEXT_COLOR
+        : LiteGraph.WIDGET_SECONDARY_TEXT_COLOR;
+      ctx.textAlign = "right";
+      ctx.fillText(shown, width - m - iconW - 4, y + H * 0.7);
+      ctx.restore();
+      // lucide "circle-dot" icon — blue for inputs, yellow for outputs
+      const s = 14;
+      const cx = width - m - iconW * 0.5;
+      const cy = y + H * 0.5;
+      const sc = s / 24;
+      const color = variant === "output" ? "#faad14" : "#1668dc";
+      ctx.strokeStyle = color;
+      ctx.fillStyle = color;
+      ctx.lineWidth = 2 * sc;
+      ctx.beginPath();
+      ctx.arc(cx, cy, 10 * sc, 0, Math.PI * 2);
+      ctx.stroke();
+      ctx.beginPath();
+      ctx.arc(cx, cy, 1.6 * sc, 0, Math.PI * 2);
+      ctx.fill();
+    },
+    mouse(this: any, event: any, _pos: number[], _node: any) {
+      if (!event.type || event.type.indexOf("down") < 0) return false;
+      controller.onEdit?.({
+        title: label,
+        value: String(this.value ?? ""),
+        apply: (v: string) => {
+          this.value = v;
+          controller.canvas.setDirty(true, true);
+        },
+      });
+      return true;
+    },
+  };
+}
+
 function coerce(meta: NodeMeta, name: string, value: unknown): unknown {
   const p = meta.params.find((q) => q.name === name);
   if (!p) return value;
@@ -104,7 +179,6 @@ export class NbtGraph {
   private makeClass(meta: NodeMeta) {
     const controller = this;
     function N(this: any) {
-      const node = this;
       if (!meta.is_trigger) this.addInput("in", "flow");
       this.addOutput("out", "flow");
       this.w = {} as Record<string, any>;
@@ -121,19 +195,9 @@ export class NbtGraph {
             "number", p.name, Number(p.default), () => {},
             { step: 1, precision: 2 });
         } else {
-          this.w[p.name] = this.addWidget(
-            "text", p.name, String(p.default), () => {});
-          // "✎" button to edit large values (HTML/JSON/…) in a code editor
-          this.addWidget("button", "✎ edit " + p.name, null, () => {
-            controller.onEdit?.({
-              title: p.name,
-              value: String(node.w[p.name].value ?? ""),
-              apply: (v: string) => {
-                node.w[p.name].value = v;
-                controller.canvas.setDirty(true, true);
-              },
-            });
-          });
+          // custom widget: value box + icon -> opens the code-editor dialog
+          this.w[p.name] = this.addCustomWidget(
+            editWidget(controller, p.name, String(p.default), "", "input"));
         }
       });
       this.cw = this.addWidget(
@@ -144,7 +208,8 @@ export class NbtGraph {
       }
       this.ow = {} as Record<string, any>;
       meta.outputs.forEach((o) => {
-        this.ow[o] = this.addWidget("text", "→ " + o, "", () => {});
+        this.ow[o] = this.addCustomWidget(
+          editWidget(controller, "→ " + o, "", "alias", "output"));
       });
       this.properties = { nbt_id: null, nbt_name: null };
       this.serialize_widgets = true;
