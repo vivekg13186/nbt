@@ -31,6 +31,28 @@ cd webui && npm run dev                   # SPA -> http://localhost:5173 (proxie
 
 See `webui/README.md` for UI details.
 
+## Distributable build
+
+Produce a self-contained zip (built UI included, so recipients only need
+Python 3.10+):
+
+```bash
+python tools/build_dist.py                 # -> dist/nbt-<date>.zip
+python tools/build_dist.py --version 1.2.0 # custom version label
+python tools/build_dist.py --skip-frontend # reuse an existing webui/dist
+```
+
+It builds the web UI, assembles a clean tree (app + `nodes/` + `webui/dist` +
+docs + helpers, excluding `node_modules`/`venv`/`.git`/caches/local DB), and
+zips it. The recipient unzips and runs:
+
+```bash
+pip install -r requirements.txt
+python api_server.py            # or ./run.sh  /  run.bat
+```
+
+The database is created fresh on first launch (Demo Flow seeded).
+
 ## Using the editor
 
 The tab bar holds open workflows (right-click a tab for Save / Rename / Duplicate / Close / Delete); the toolbar has the active workflow name, Add node, the environment picker, and Save / Listen / Run. The left rail switches between Workflows, Nodes, Packages, Environments, Listeners and Executions. The **Packages** view installs groups of custom nodes from a git URL or a `.nbtpack`/`.zip` bundle (see `docs/CUSTOM_NODES.md`). To add a node, use the Nodes palette, the toolbar's Add node, or right-click the canvas. Drag from a node's `out` pin to another node's `in` pin to connect; the canvas pans and zooms with the mouse. A toggleable shell sits at the bottom. The Executions page lists runs; click one for step inputs/outputs/error detail.

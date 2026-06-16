@@ -51,11 +51,20 @@ export interface GraphNode {
   post: string;
   out_aliases: Record<string, string>;
   pos: [number, number];
+  size?: [number, number];
+}
+
+export interface GraphGroup {
+  title?: string;
+  bounding?: number[];
+  color?: string;
+  font_size?: number;
 }
 
 export interface Graph {
   nodes: GraphNode[];
   links: [string, string][];
+  groups?: GraphGroup[];
 }
 
 export interface FlowSummary {

@@ -92,7 +92,8 @@ Any failure stops the flow immediately and the execution is recorded as FAILED w
 
 The `pre` / `post` fields and templates are Python expressions with safe builtins (`len`, `str`, `int`, `min`, `max`, `sorted`, ...). Available names:
 
-- `last` — outputs of the previous node (in the `post` field: this node's outputs)
+- `last` — outputs of the first connected parent (in the `post` field: this node's outputs)
+- `ins` — list of the outputs of **all** connected parents, in order; use this for **join** nodes that take several inputs, e.g. `ins[0]['value']`, `ins[1]['status']`, or `len(ins)`
 - `<output alias>` — each declared output has an alias box on the node (in its `out` section); typing `casenumber` there publishes that output as a flat variable, so later nodes can write `casenumber` (or `{{ casenumber }}` / `ctx['casenumber']`)
 - `ctx` — the whole context dict; node outputs are also nested under auto-generated node names (e.g. `ctx['set_value_n1']`), but aliases are the recommended way to reference them
 

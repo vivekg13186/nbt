@@ -24,6 +24,8 @@ Expressions (pre / post / {{ templates }} in string inputs) are
 evaluated against the execution context:
   * `ctx`  - dict of {node name: outputs dict} for already-executed nodes
   * `last` - outputs of the first connected upstream parent
+  * `ins`  - list of outputs of ALL connected parents, in order (for join
+    nodes, e.g. `ins[1]['value']`)
   * node names that are valid identifiers are also available directly,
     e.g. `get_user['status'] == 200`
 """
@@ -90,9 +92,22 @@ def build_dag(graph):
 
     The only structural rule is acyclicity. Multiple roots, branches, joins
     and several disconnected subgraphs are all allowed. Stale links (pointing
-    at missing nodes) are ignored.
+    at missing nodes) are ignored. Duplicate node ids (e.g. from a copy-paste
+    in an older editor) are de-duplicated so no node is silently dropped.
     """
-    nodes = {n["id"]: n for n in graph.get("nodes", [])}
+    nodes = {}
+    for n in graph.get("nodes", []):
+        nid = n.get("id")
+        if not nid or nid in nodes:  # missing or duplicate -> make it unique
+            base = nid or (n.get("type") or "node")
+            i = 2
+            new = f"{base}__{i}"
+            while new in nodes:
+                i += 1
+                new = f"{base}__{i}"
+            n = {**n, "id": new}
+            nid = new
+        nodes[nid] = n
     if not nodes:
         raise FlowValidationError("Flow has no nodes.")
 
@@ -138,12 +153,6 @@ def _descendants(start, children):
     return seen
 
 
-def _first_parent_outputs(nid, parents, node_outputs):
-    """`last` for a node = outputs of its first parent that produced any."""
-    for pid in parents.get(nid, []):
-        if pid in node_outputs:
-            return node_outputs[pid]
-    return {}
 
 
 def _name(node):
@@ -230,9 +239,12 @@ class Engine:
 
         for nid in run_ids:
             node = nodes[nid]
-            last = _first_parent_outputs(nid, parents, node_outputs)
+            # outputs of every connected parent that produced any, in order
+            ins = [node_outputs[p] for p in parents.get(nid, [])
+                   if p in node_outputs]
+            last = ins[0] if ins else {}
             ok, fatal_error, outputs = self._execute_node(
-                exec_id, node, ctx, last, log_fn)
+                exec_id, node, ctx, last, ins, log_fn)
             if not ok:
                 self.db.finish_execution(exec_id, "failed", fatal_error)
                 return exec_id, "failed", fatal_error
@@ -242,14 +254,17 @@ class Engine:
         self.db.finish_execution(exec_id, "passed", None)
         return exec_id, "passed", None
 
-    def _execute_node(self, exec_id, node, ctx, last, log_fn=None):
+    def _execute_node(self, exec_id, node, ctx, last, ins=None, log_fn=None):
         """Run one node. Returns (ok, error, outputs).
 
-        `last` is the outputs of this node's first connected parent. Records
-        the step. A skipped node returns (True, None, None).
+        `last` is the outputs of this node's first connected parent and `ins`
+        is the list of outputs of all connected parents (in order) — use it
+        for join nodes that need every input, e.g. `ins[1]`. Records the step.
+        A skipped node returns (True, None, None).
         """
         name = _name(node)
         ctx["last"] = last  # this node's view of the previous node's outputs
+        ctx["ins"] = list(ins) if ins else []  # all parents' outputs, in order
         # node-scoped logger: ctx["log"]("hi", x) -> "<node name>: hi <x>"
         base_log = log_fn if callable(log_fn) else (lambda *_a, **_k: None)
         ctx["log"] = lambda *parts: base_log(

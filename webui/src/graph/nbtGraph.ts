@@ -168,15 +168,39 @@ export class NbtGraph {
     return N as any;
   }
 
+  // next unused node id (scans the graph so copy-paste can't collide)
+  private nextId(): string {
+    let max = this.counter;
+    (this.graph._nodes || []).forEach((n: any) => {
+      const id = n.properties && n.properties.nbt_id;
+      const m = id ? parseInt(String(id).replace(/^n/, ""), 10) : NaN;
+      if (!isNaN(m) && m > max) max = m;
+    });
+    this.counter = max + 1;
+    return "n" + this.counter;
+  }
+
   private installAutoId() {
     const self = this;
     this.graph.onNodeAdded = function (node: any) {
-      if (node.properties && !node.properties.nbt_id) {
-        node.properties.nbt_id = "n" + ++self.counter;
-        node.properties.nbt_name =
-          (node.nbtType || "node") + "_" + node.properties.nbt_id;
-        // The visible title IS the node name, so edits to it are saved.
-        node.title = node.properties.nbt_name;
+      if (!node.properties) return;
+      // assign an id when missing, or when it collides with another node
+      // (copy-paste clones nbt_id) so ids stay unique.
+      const dup = (self.graph._nodes || []).some(
+        (o: any) =>
+          o !== node && o.properties &&
+          o.properties.nbt_id === node.properties.nbt_id);
+      if (!node.properties.nbt_id || dup) {
+        const id = self.nextId();
+        node.properties.nbt_id = id;
+        const auto = (node.nbtType || "node") + "_" + id;
+        // refresh the auto-generated name/title (keep a user-set title)
+        const autoRe = new RegExp("^" + (node.nbtType || "node") + "_n\\d+$");
+        if (!node.properties.nbt_name ||
+            autoRe.test(String(node.title || ""))) {
+          node.properties.nbt_name = auto;
+          node.title = auto;
+        }
       }
     };
   }
@@ -252,6 +276,9 @@ export class NbtGraph {
         post: n.aw ? String(n.aw.value || "") : "",
         out_aliases: aliases,
         pos: [Math.round(n.pos[0]), Math.round(n.pos[1])],
+        size: n.size
+          ? [Math.round(n.size[0]), Math.round(n.size[1])]
+          : undefined,
       });
     });
     for (const id in this.graph.links) {
@@ -264,7 +291,12 @@ export class NbtGraph {
       }
     }
     this.orphans.forEach((nd) => nodes.push(nd));
-    return { nodes, links };
+    // persist group boxes (title / bounds / color) — UI metadata
+    const groups = (this.graph._groups || []).map((g: any) =>
+      typeof g.serialize === "function"
+        ? g.serialize()
+        : { title: g.title, bounding: g.bounding, color: g.color });
+    return { nodes, links, groups };
   }
 
   importGraph(data: Graph) {
@@ -273,6 +305,7 @@ export class NbtGraph {
     this.counter = 0;
     this.orphans = [];
     const byId: Record<string, any> = {};
+    const used = new Set<string>();
     (data.nodes || []).forEach((nd) => {
       const node = LiteGraph.createNode("nbt/" + nd.type);
       if (!node) {
@@ -281,7 +314,15 @@ export class NbtGraph {
       }
       node.pos = [(nd.pos && nd.pos[0]) || 60, (nd.pos && nd.pos[1]) || 60];
       this.graph.add(node);
-      node.properties.nbt_id = nd.id;
+      // restore a user-adjusted size, if saved
+      if (nd.size && nd.size.length === 2) {
+        node.size = [nd.size[0], nd.size[1]];
+      }
+      // repair missing/duplicate ids from older graphs (copy-paste collisions)
+      let nid = nd.id;
+      if (!nid || used.has(nid)) nid = this.nextId();
+      used.add(nid);
+      node.properties.nbt_id = nid;
       node.properties.nbt_name = nd.name || null;
       // show the saved name as the editable node title
       if (nd.name) node.title = nd.name;
@@ -296,13 +337,25 @@ export class NbtGraph {
       for (const o in nd.out_aliases || {}) {
         if (node.ow[o]) node.ow[o].value = nd.out_aliases[o];
       }
-      byId[nd.id] = node;
+      // links reference the saved id; map to the first node that used it
+      if (nd.id && !(nd.id in byId)) byId[nd.id] = node;
     });
     (data.links || []).forEach((l) => {
       const a = byId[l[0]];
       const b = byId[l[1]];
       // connect each parent into a fresh input pin so joins reload intact
       if (a && b) a.connect(0, b, freeInputSlot(b));
+    });
+    // restore group boxes
+    ((data as Graph).groups || []).forEach((gd) => {
+      try {
+        const grp = new LiteGraph.LGraphGroup();
+        if (typeof grp.configure === "function") grp.configure(gd);
+        else Object.assign(grp, gd);
+        this.graph.add(grp);
+      } catch {
+        /* ignore malformed group */
+      }
     });
     this.installAutoId();
     this.canvas.setDirty(true, true);
