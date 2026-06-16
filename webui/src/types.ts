@@ -70,6 +70,7 @@ export interface Graph {
 export interface FlowSummary {
   id: string;
   name: string;
+  folder?: string | null;
   created_at: number;
   updated_at: number;
 }
@@ -77,6 +78,18 @@ export interface FlowSummary {
 export interface Flow extends FlowSummary {
   graph: Graph;
   listening?: boolean;
+}
+
+export interface FlowVersion {
+  id: string;
+  flow_id: string;
+  version: number;
+  label: string | null;
+  created_at: number;
+}
+
+export interface FlowVersionDetail extends FlowVersion {
+  graph: Graph;
 }
 
 export interface Environment {
@@ -114,6 +127,7 @@ export interface ExecutionStep {
 
 export interface ExecutionDetail extends Execution {
   steps: ExecutionStep[];
+  context?: Record<string, unknown> | null;
 }
 
 export interface ListenerStat {

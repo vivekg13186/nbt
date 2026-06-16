@@ -41,6 +41,10 @@ interface State {
   openBottom: (t: "shell" | "log") => void;
 
   // open workflow tabs
+  // whether the active flow's canvas contains a trigger node (-> show Listen)
+  flowHasTrigger: boolean;
+  setFlowHasTrigger: (b: boolean) => void;
+
   openTabs: string[]; // flow ids, in order
   activeFlowId: string | null;
   openFlow: (id: string) => void;
@@ -94,6 +98,9 @@ export const useStore = create<State>((set, get) => ({
   bottomTab: "shell",
   setBottomTab: (bottomTab) => set({ bottomTab }),
   openBottom: (bottomTab) => set({ terminalOpen: true, bottomTab }),
+
+  flowHasTrigger: false,
+  setFlowHasTrigger: (flowHasTrigger) => set({ flowHasTrigger }),
 
   openTabs: [],
   activeFlowId: null,

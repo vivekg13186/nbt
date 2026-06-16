@@ -16,6 +16,7 @@ export default function GraphEditor() {
   const { message } = AntApp.useApp();
   const nodes = useStore((s) => s.nodes);
   const activeFlowId = useStore((s) => s.activeFlowId);
+  const setFlowHasTrigger = useStore((s) => s.setFlowHasTrigger);
 
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -31,6 +32,7 @@ export default function GraphEditor() {
     activeGraphRef.current = g;
     activeGraphRef.flowId = null;
     g.onEdit = (req) => setEdit(req);
+    g.onGraphChange = () => setFlowHasTrigger(g.hasTrigger());
     g.setTheme(true);
     g.resize();
 

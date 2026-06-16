@@ -246,6 +246,36 @@ export default function RunsPage() {
                 expandedRowRender: (s: ExecutionStep) => renderStepBody(s),
               }}
             />
+            {detail.context && Object.keys(detail.context).length > 0 && (
+              <div style={{ marginTop: 16 }}>
+                <strong>Context</strong>
+                <div
+                  style={{
+                    fontSize: 11,
+                    color: "var(--nbt-muted)",
+                    marginBottom: 6,
+                  }}
+                >
+                  Final published variables (node outputs and aliases);
+                  environment variables are not included.
+                </div>
+                <div
+                  style={{
+                    border: "1px solid var(--nbt-border)",
+                    borderRadius: 6,
+                    overflow: "hidden",
+                  }}
+                >
+                  <CodeMirror
+                    value={JSON.stringify(detail.context, null, 2)}
+                    theme={vscodeDark}
+                    editable={false}
+                    extensions={[json()]}
+                    maxHeight="320px"
+                  />
+                </div>
+              </div>
+            )}
           </>
         )}
       </Drawer>

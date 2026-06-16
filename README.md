@@ -61,6 +61,10 @@ To add a node use the Nodes palette, the toolbar's Add node, or right-click the 
 
 Each node has its declared **inputs**, a **pre** expression (falsy → node is skipped) and a **post** expression (falsy → node fails). Every text field has a code-editor dialog (the `</>`-style icon) for large values with JSON/HTML/JS highlighting. Edit a node's name via its title (right-click node → Title). Each declared output gets an alias box: type a variable name (e.g. `casenumber`) and that output is published flat into the context — later nodes can use `casenumber` / `{{ casenumber }}` / `ctx['casenumber']`. Use `last` for the first connected parent's outputs and `ins` for the list of all parents' outputs (joins).
 
+## Versioning (snapshots)
+
+Right-click a tab → **Snapshot version** to save a read-only copy of the workflow's current graph (with an optional label). **Version history…** opens a drawer listing all snapshots; from there you can **View** a snapshot (read-only canvas), **Run** it (recorded as `Name (vN)`), **Export** its JSON, or delete it. Snapshots are immutable — editing always happens on the live workflow.
+
 ## Execution rules (DAG)
 
 A flow is a directed acyclic graph: nodes may have multiple inputs and outputs, branches and joins are allowed, and a graph may contain several disconnected subgraphs — the only structural rule is no cycles. Nodes execute in topological order; a node's `last` is its first connected parent's outputs. A node fails if `run()` raises, if the class `check()` hook raises, or if its post expression is falsy. Any failure fails the whole flow immediately; otherwise it passes. Every run and every step is recorded in SQLite.

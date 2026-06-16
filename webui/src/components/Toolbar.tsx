@@ -19,6 +19,7 @@ export default function Toolbar() {
   const nodes = useStore((s) => s.nodes);
   const envs = useStore((s) => s.envs);
   const activeFlowId = useStore((s) => s.activeFlowId);
+  const flowHasTrigger = useStore((s) => s.flowHasTrigger);
   const activeEnvName = useStore((s) => s.activeEnvName);
   const setActiveEnv = useStore((s) => s.setActiveEnv);
   const view = useStore((s) => s.view);
@@ -142,24 +143,28 @@ export default function Toolbar() {
       >
         Save
       </Button>
-      <Button
-        size="small"
-        icon={<Zap size={15} />}
-        onClick={onListen}
-        disabled={!flow}
-      >
-        Listen
-      </Button>
-      <Button
-        type="primary"
-        size="small"
-        icon={<Play size={15} />}
-        loading={busy}
-        onClick={onRun}
-        disabled={!flow}
-      >
-        Run
-      </Button>
+      {flowHasTrigger ? (
+        <Button
+          type="primary"
+          size="small"
+          icon={<Zap size={15} />}
+          onClick={onListen}
+          disabled={!flow}
+        >
+          Listen
+        </Button>
+      ) : (
+        <Button
+          type="primary"
+          size="small"
+          icon={<Play size={15} />}
+          loading={busy}
+          onClick={onRun}
+          disabled={!flow}
+        >
+          Run
+        </Button>
+      )}
 
       <Tooltip title="Show log">
         <Button

@@ -141,6 +141,21 @@ def build_dag(graph):
     return nodes, order, parents, children
 
 
+_CTX_INTERNAL = ("last", "ctx", "env", "ins", "log", "media", "run_flow")
+
+
+def _context_snapshot(ctx, env_vars):
+    """The flow's final context for the Executions view: node outputs and
+    published aliases. Excludes engine internals and environment variables."""
+    env_keys = set(env_vars or {})
+    out = {}
+    for k, v in ctx.items():
+        if k in _CTX_INTERNAL or k in env_keys:
+            continue
+        out[k] = v
+    return out
+
+
 def _descendants(start, children):
     """All node ids reachable from `start` (excluding `start` itself)."""
     seen, stack = set(), list(children.get(start, []))
@@ -266,12 +281,15 @@ class Engine:
             ok, fatal_error, outputs = self._execute_node(
                 exec_id, node, ctx, last, ins, log_fn, published)
             if not ok:
-                self.db.finish_execution(exec_id, "failed", fatal_error)
+                self.db.finish_execution(
+                    exec_id, "failed", fatal_error,
+                    _context_snapshot(ctx, env_vars))
                 return exec_id, "failed", fatal_error
             if outputs is not None:
                 node_outputs[nid] = outputs
 
-        self.db.finish_execution(exec_id, "passed", None)
+        self.db.finish_execution(exec_id, "passed", None,
+                                 _context_snapshot(ctx, env_vars))
         return exec_id, "passed", None
 
     def _run_subflow(self, name, environment, env_vars, seed_vars, stack,

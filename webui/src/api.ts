@@ -5,6 +5,8 @@ import type {
   Flow,
   FlowSummary,
   Graph,
+  FlowVersion,
+  FlowVersionDetail,
   ListenerStat,
   LoadError,
   NodeMeta,
@@ -42,15 +44,20 @@ export const api = {
   // flows
   listFlows: () => req<FlowSummary[]>("/flows"),
   getFlow: (id: string) => req<Flow>(`/flows/${id}`),
-  createFlow: (name: string, graph?: Graph) =>
+  createFlow: (name: string, graph?: Graph, folder?: string | null) =>
     req<Flow>("/flows", {
       method: "POST",
-      body: JSON.stringify({ name, graph }),
+      body: JSON.stringify({ name, graph, folder: folder || null }),
     }),
   renameFlow: (id: string, name: string) =>
     req<Flow>(`/flows/${id}`, {
       method: "PATCH",
       body: JSON.stringify({ name }),
+    }),
+  setFlowFolder: (id: string, folder: string | null) =>
+    req<Flow>(`/flows/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ set_folder: true, folder: folder || null }),
     }),
   saveGraph: (id: string, graph: Graph) =>
     req<Flow>(`/flows/${id}`, {
@@ -69,6 +76,24 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ environment }),
     }),
+
+  // versions (snapshots)
+  snapshotVersion: (flowId: string, label?: string | null, graph?: Graph) =>
+    req<FlowVersion>(`/flows/${flowId}/versions`, {
+      method: "POST",
+      body: JSON.stringify({ label: label || null, graph: graph ?? null }),
+    }),
+  listVersions: (flowId: string) =>
+    req<FlowVersion[]>(`/flows/${flowId}/versions`),
+  getVersion: (versionId: string) =>
+    req<FlowVersionDetail>(`/versions/${versionId}`),
+  runVersion: (versionId: string, environment?: string | null) =>
+    req<RunResult>(`/versions/${versionId}/run`, {
+      method: "POST",
+      body: JSON.stringify({ environment }),
+    }),
+  deleteVersion: (versionId: string) =>
+    req<{ ok: boolean }>(`/versions/${versionId}`, { method: "DELETE" }),
 
   // environments
   listEnvs: () => req<Environment[]>("/environments"),

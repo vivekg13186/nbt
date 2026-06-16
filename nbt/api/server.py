@@ -197,11 +197,14 @@ def node_metas(registry) -> list[dict]:
 class FlowCreate(BaseModel):
     name: str
     graph: Optional[dict] = None
+    folder: Optional[str] = None
 
 
 class FlowPatch(BaseModel):
     name: Optional[str] = None
     graph: Optional[dict] = None
+    folder: Optional[str] = None
+    set_folder: bool = False  # allow clearing folder to null
 
 
 class DuplicateBody(BaseModel):
@@ -225,6 +228,11 @@ class RunBody(BaseModel):
 class GitInstallBody(BaseModel):
     url: str
     ref: Optional[str] = None
+
+
+class VersionCreate(BaseModel):
+    label: Optional[str] = None
+    graph: Optional[dict] = None  # snapshot this graph; else the flow's saved one
 
 
 # --------------------------------------------------------------------------
@@ -301,7 +309,8 @@ def create_app(db, registry) -> FastAPI:
             raise HTTPException(400, "name required")
         if db.get_flow_by_name(name):
             raise HTTPException(409, "a flow with that name already exists")
-        fid = db.create_flow(name, body.graph)
+        folder = (body.folder or "").strip() or None
+        fid = db.create_flow(name, body.graph, folder)
         logbus.emit(f"[flow] created '{name}'")
         return db.get_flow(fid)
 
@@ -323,6 +332,8 @@ def create_app(db, registry) -> FastAPI:
                 lst.flow["name"] = new
         if body.graph is not None:
             db.save_graph(flow_id, body.graph)
+        if body.set_folder:  # explicit set (folder=None/"" clears it)
+            db.set_flow_folder(flow_id, (body.folder or "").strip() or None)
         return db.get_flow(flow_id)
 
     @app.post("/api/flows/{flow_id}/duplicate")
@@ -343,18 +354,13 @@ def create_app(db, registry) -> FastAPI:
         db.delete_flow(flow_id)
         return {"ok": True}
 
-    @app.post("/api/flows/{flow_id}/run")
-    async def run_flow(flow_id: str, body: RunBody):
-        flow = db.get_flow(flow_id)
-        if flow is None:
-            raise HTTPException(404, "flow not found")
-        env_name, env_vars = _env_lookup(body.environment)
-        logbus.emit(f"[run] '{flow['name']}'"
+    async def _run_graph(flow_id, flow_name, graph, env_name, env_vars):
+        logbus.emit(f"[run] '{flow_name}'"
                     + (f" (env {env_name})" if env_name else ""))
         node_log = lambda m: logbus.emit("    " + m, level="info")
         exec_id, status, error = await run_in_threadpool(
             functools.partial(
-                engine.execute, flow["id"], flow["name"], flow["graph"],
+                engine.execute, flow_id, flow_name, graph,
                 env_name, env_vars, log=node_log, media=media_register))
         for st in db.get_steps(exec_id):
             line = f"  [{st['status']:>7}] {st['node_name']} ({st['node_type']})"
@@ -364,9 +370,62 @@ def create_app(db, registry) -> FastAPI:
             if st["error"]:
                 logbus.emit("           " + st["error"].splitlines()[0],
                             level="error")
-        logbus.emit(f"[run] {flow['name']}: {status.upper()}",
+        logbus.emit(f"[run] {flow_name}: {status.upper()}",
                     level="ok" if status == "passed" else "error")
         return {"execution_id": exec_id, "status": status, "error": error}
+
+    @app.post("/api/flows/{flow_id}/run")
+    async def run_flow(flow_id: str, body: RunBody):
+        flow = db.get_flow(flow_id)
+        if flow is None:
+            raise HTTPException(404, "flow not found")
+        env_name, env_vars = _env_lookup(body.environment)
+        return await _run_graph(flow["id"], flow["name"], flow["graph"],
+                                env_name, env_vars)
+
+    # ---------------- flow versions (snapshots) ----------------
+    @app.post("/api/flows/{flow_id}/versions")
+    def snapshot_flow(flow_id: str, body: VersionCreate):
+        flow = db.get_flow(flow_id)
+        if flow is None:
+            raise HTTPException(404, "flow not found")
+        graph = body.graph if body.graph is not None else flow["graph"]
+        # also persist the provided graph as the flow's current graph
+        if body.graph is not None:
+            db.save_graph(flow_id, body.graph)
+        v = db.create_version(flow_id, graph,
+                              (body.label or "").strip() or None)
+        logbus.emit(f"[version] snapshot '{flow['name']}' v{v['version']}")
+        return v
+
+    @app.get("/api/flows/{flow_id}/versions")
+    def list_versions(flow_id: str):
+        return db.list_versions(flow_id)
+
+    @app.get("/api/versions/{version_id}")
+    def get_version(version_id: str):
+        v = db.get_version(version_id)
+        if v is None:
+            raise HTTPException(404, "version not found")
+        return v
+
+    @app.post("/api/versions/{version_id}/run")
+    async def run_version(version_id: str, body: RunBody):
+        v = db.get_version(version_id)
+        if v is None:
+            raise HTTPException(404, "version not found")
+        flow = db.get_flow(v["flow_id"])
+        name = f"{flow['name'] if flow else v['flow_id']} (v{v['version']})"
+        env_name, env_vars = _env_lookup(body.environment)
+        return await _run_graph(v["flow_id"], name, v["graph"],
+                                env_name, env_vars)
+
+    @app.delete("/api/versions/{version_id}")
+    def delete_version(version_id: str):
+        if db.get_version(version_id) is None:
+            raise HTTPException(404, "version not found")
+        db.delete_version(version_id)
+        return {"ok": True}
 
     # ---------------- environments ----------------
     @app.get("/api/environments")

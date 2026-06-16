@@ -1,11 +1,20 @@
-import { useRef, useState } from "react";
-import { App as AntApp, Button, Dropdown, Input, Modal, Tooltip } from "antd";
+import { useMemo, useRef, useState } from "react";
+import {
+  App as AntApp,
+  AutoComplete,
+  Button,
+  Dropdown,
+  Input,
+  Modal,
+  Tooltip,
+} from "antd";
 import type { MenuProps } from "antd";
 import { Download, Menu, Plus, Upload, X } from "lucide-react";
 import { useStore } from "../store";
 import { api } from "../api";
 import { activeGraphRef } from "../graph/active";
 import type { Graph } from "../types";
+import VersionsDrawer from "./VersionsDrawer";
 
 export default function TabBar() {
   const { message, modal } = AntApp.useApp();
@@ -19,7 +28,16 @@ export default function TabBar() {
 
   const [newOpen, setNewOpen] = useState(false);
   const [newName, setNewName] = useState("");
+  const [newFolder, setNewFolder] = useState("");
+  const [versionsFor, setVersionsFor] = useState<string | null>(null);
   const importRef = useRef<HTMLInputElement>(null);
+
+  const folders = useMemo(
+    () =>
+      [...new Set(flows.map((f) => (f.folder || "").trim()).filter(Boolean))]
+        .sort((a, b) => a.localeCompare(b)),
+    [flows],
+  );
 
   const nameOf = (id: string) =>
     flows.find((f) => f.id === id)?.name ?? "(deleted)";
@@ -101,14 +119,49 @@ export default function TabBar() {
     const name = newName.trim();
     if (!name) return;
     try {
-      const flow = await api.createFlow(name, { nodes: [], links: [] });
+      const flow = await api.createFlow(
+        name, { nodes: [], links: [] }, newFolder.trim() || null);
       await refreshFlows();
       openFlow(flow.id);
       setNewOpen(false);
       setNewName("");
+      setNewFolder("");
     } catch (e) {
       message.error((e as Error).message);
     }
+  }
+
+  // Snapshot a workflow: save the live canvas first (if it's the one shown),
+  // then create a read-only version, optionally labelled.
+  function snapshotFlow(id: string, name: string) {
+    let label = "";
+    modal.confirm({
+      title: `Snapshot "${name}"`,
+      content: (
+        <Input
+          placeholder="Label (optional)"
+          onChange={(e) => (label = e.target.value)}
+          autoFocus
+        />
+      ),
+      okText: "Snapshot",
+      onOk: async () => {
+        try {
+          // snapshot the exact graph on the canvas (if this flow is shown),
+          // so the snapshot is never the stale/empty saved copy
+          const liveGraph =
+            id === activeGraphRef.flowId && activeGraphRef.current
+              ? activeGraphRef.current.exportGraph()
+              : undefined;
+          const v = await api.snapshotVersion(
+            id, label.trim() || null, liveGraph);
+          await refreshFlows();
+          message.success(`Saved snapshot v${v.version}`);
+        } catch (e) {
+          message.error((e as Error).message);
+        }
+      },
+    });
   }
 
   function tabMenu(id: string): MenuProps {
@@ -118,6 +171,9 @@ export default function TabBar() {
         { key: "rename", label: "Rename" },
         { key: "duplicate", label: "Duplicate" },
         { key: "export", label: "Export JSON" },
+        { type: "divider" },
+        { key: "snapshot", label: "Snapshot version" },
+        { key: "versions", label: "Version history…" },
         { type: "divider" },
         { key: "close", label: "Close tab" },
         { key: "delete", label: "Delete workflow", danger: true },
@@ -138,6 +194,10 @@ export default function TabBar() {
           duplicateFlow(id, name);
         } else if (key === "export") {
           exportFlow(id);
+        } else if (key === "snapshot") {
+          snapshotFlow(id, name);
+        } else if (key === "versions") {
+          setVersionsFor(id);
         } else if (key === "close") {
           closeTab(id);
         } else if (key === "delete") {
@@ -312,8 +372,24 @@ export default function TabBar() {
           onChange={(e) => setNewName(e.target.value)}
           onPressEnter={createFlow}
           autoFocus
+          style={{ marginBottom: 8 }}
+        />
+        <AutoComplete
+          placeholder="Folder (optional)"
+          options={folders.map((f) => ({ value: f }))}
+          filterOption
+          value={newFolder}
+          onChange={setNewFolder}
+          style={{ width: "100%" }}
         />
       </Modal>
+
+      <VersionsDrawer
+        flowId={versionsFor}
+        flowName={versionsFor ? nameOf(versionsFor) : ""}
+        open={!!versionsFor}
+        onClose={() => setVersionsFor(null)}
+      />
     </div>
   );
 }

@@ -12,9 +12,20 @@ CREATE TABLE IF NOT EXISTS flows (
     id          TEXT PRIMARY KEY,
     name        TEXT NOT NULL UNIQUE,
     graph       TEXT NOT NULL DEFAULT '{"nodes": [], "links": []}',
+    folder      TEXT,
     created_at  REAL NOT NULL,
     updated_at  REAL NOT NULL
 );
+CREATE TABLE IF NOT EXISTS flow_versions (
+    id          TEXT PRIMARY KEY,
+    flow_id     TEXT NOT NULL,
+    version     INTEGER NOT NULL,
+    label       TEXT,
+    graph       TEXT NOT NULL,
+    created_at  REAL NOT NULL
+);
+CREATE INDEX IF NOT EXISTS idx_versions_flow
+    ON flow_versions(flow_id, version DESC);
 CREATE TABLE IF NOT EXISTS environments (
     id          TEXT PRIMARY KEY,
     name        TEXT NOT NULL UNIQUE,
@@ -29,6 +40,7 @@ CREATE TABLE IF NOT EXISTS executions (
     environment TEXT,
     status      TEXT NOT NULL,            -- running | passed | failed | error
     error       TEXT,
+    context     TEXT,                     -- final published context (no env)
     started_at  REAL NOT NULL,
     finished_at REAL
 );
@@ -77,6 +89,16 @@ class Database:
                     "ALTER TABLE executions ADD COLUMN environment TEXT")
             except sqlite3.OperationalError:
                 pass  # column already exists
+            try:  # migration for databases created before flow folders
+                self._conn.execute(
+                    "ALTER TABLE flows ADD COLUMN folder TEXT")
+            except sqlite3.OperationalError:
+                pass  # column already exists
+            try:  # migration for execution context snapshots
+                self._conn.execute(
+                    "ALTER TABLE executions ADD COLUMN context TEXT")
+            except sqlite3.OperationalError:
+                pass  # column already exists
             self._conn.commit()
 
     def _connect(self):
@@ -102,19 +124,24 @@ class Database:
 
     # ---------------- flows (CRUD) ----------------
 
-    def create_flow(self, name, graph=None):
+    def create_flow(self, name, graph=None, folder=None):
         fid = uuid.uuid4().hex[:12]
         now = time.time()
         graph_json = json.dumps(graph or {"nodes": [], "links": []})
         self._exec(
-            "INSERT INTO flows (id, name, graph, created_at, updated_at) "
-            "VALUES (?,?,?,?,?)", (fid, name, graph_json, now, now))
+            "INSERT INTO flows (id, name, graph, folder, created_at, "
+            "updated_at) VALUES (?,?,?,?,?,?)",
+            (fid, name, graph_json, folder or None, now, now))
         return fid
 
     def list_flows(self):
         return self._query(
-            "SELECT id, name, created_at, updated_at FROM flows "
+            "SELECT id, name, folder, created_at, updated_at FROM flows "
             "ORDER BY name COLLATE NOCASE")
+
+    def set_flow_folder(self, flow_id, folder):
+        self._exec("UPDATE flows SET folder=?, updated_at=? WHERE id=?",
+                   (folder or None, time.time(), flow_id))
 
     def get_flow(self, flow_id):
         rows = self._query("SELECT * FROM flows WHERE id=?", (flow_id,))
@@ -140,10 +167,43 @@ class Database:
         flow = self.get_flow(flow_id)
         if flow is None:
             return None
-        return self.create_flow(new_name, flow["graph"])
+        return self.create_flow(new_name, flow["graph"],
+                                flow.get("folder"))
 
     def delete_flow(self, flow_id):
         self._exec("DELETE FROM flows WHERE id=?", (flow_id,))
+        self._exec("DELETE FROM flow_versions WHERE flow_id=?", (flow_id,))
+
+    # ---------------- flow versions (snapshots) ----------------
+
+    def create_version(self, flow_id, graph, label=None):
+        vid = uuid.uuid4().hex[:12]
+        rows = self._query(
+            "SELECT COALESCE(MAX(version), 0) AS m FROM flow_versions "
+            "WHERE flow_id=?", (flow_id,))
+        version = (rows[0]["m"] if rows else 0) + 1
+        self._exec(
+            "INSERT INTO flow_versions (id, flow_id, version, label, graph, "
+            "created_at) VALUES (?,?,?,?,?,?)",
+            (vid, flow_id, version, label or None, json.dumps(graph),
+             time.time()))
+        return self.get_version(vid)
+
+    def list_versions(self, flow_id):
+        return self._query(
+            "SELECT id, flow_id, version, label, created_at FROM "
+            "flow_versions WHERE flow_id=? ORDER BY version DESC", (flow_id,))
+
+    def get_version(self, version_id):
+        rows = self._query(
+            "SELECT * FROM flow_versions WHERE id=?", (version_id,))
+        if not rows:
+            return None
+        rows[0]["graph"] = json.loads(rows[0]["graph"] or "{}")
+        return rows[0]
+
+    def delete_version(self, version_id):
+        self._exec("DELETE FROM flow_versions WHERE id=?", (version_id,))
 
     # ---------------- environments (CRUD) ----------------
 
@@ -197,10 +257,13 @@ class Database:
             (eid, flow_id, flow_name, environment, "running", time.time()))
         return eid
 
-    def finish_execution(self, exec_id, status, error):
+    def finish_execution(self, exec_id, status, error, context=None):
         self._exec(
-            "UPDATE executions SET status=?, error=?, finished_at=? "
-            "WHERE id=?", (status, error, time.time(), exec_id))
+            "UPDATE executions SET status=?, error=?, context=?, "
+            "finished_at=? WHERE id=?",
+            (status, error,
+             None if context is None else json.dumps(context, default=repr),
+             time.time(), exec_id))
 
     def list_executions(self, limit=200):
         return self._query(
@@ -209,7 +272,11 @@ class Database:
 
     def get_execution(self, exec_id):
         rows = self._query("SELECT * FROM executions WHERE id=?", (exec_id,))
-        return rows[0] if rows else None
+        if not rows:
+            return None
+        ctx = rows[0].get("context")
+        rows[0]["context"] = json.loads(ctx) if ctx else None
+        return rows[0]
 
     def clear_executions(self):
         self._exec("DELETE FROM execution_steps")

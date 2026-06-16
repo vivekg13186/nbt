@@ -91,6 +91,7 @@ function editWidget(
       ctx.fill();
     },
     mouse(this: any, event: any, _pos: number[], _node: any) {
+      if (controller.readOnly) return false; // view-only: no value editing
       if (!event.type || event.type.indexOf("down") < 0) return false;
       controller.onEdit?.({
         title: label,
@@ -122,32 +123,59 @@ export class NbtGraph {
   private counter = 0;
   private orphans: GraphNode[] = [];
   private keyGuard?: (e: KeyboardEvent) => void;
+  readOnly = false; // when true: view-only (snapshot), no edits / value dialog
   // set by the React layer to open a code-editor modal for a text field
   onEdit?: (req: {
     title: string;
     value: string;
     apply: (v: string) => void;
   }) => void;
+  // fired when nodes are added/removed/loaded (so the UI can react)
+  onGraphChange?: () => void;
 
-  constructor(el: HTMLCanvasElement, metas: NodeMeta[]) {
+  // does the graph currently contain a trigger node?
+  hasTrigger(): boolean {
+    return (this.graph._nodes || []).some(
+      (n: any) => this.types[n.nbtType]?.is_trigger,
+    );
+  }
+
+  constructor(
+    el: HTMLCanvasElement,
+    metas: NodeMeta[],
+    opts: { readOnly?: boolean; reuseTypes?: boolean } = {},
+  ) {
     this.el = el;
-    LiteGraph.registered_node_types = {};
-    LiteGraph.searchbox_extras = {};
+    this.readOnly = !!opts.readOnly;
     // Keep value/search popups open until the user commits or presses Esc —
     // the default auto-closes them when the mouse leaves, which makes editing
     // widget values feel flaky.
     LiteGraph.dialog_close_on_mouse_leave = false;
     LiteGraph.search_hide_on_mouse_leave = false;
-    metas.forEach((m) => {
-      this.types[m.type] = m;
-      LiteGraph.registerNodeType("nbt/" + m.type, this.makeClass(m));
-    });
+    // `LiteGraph.registered_node_types` is a global singleton. A second
+    // instance (e.g. the read-only version viewer) must NOT reset it — that
+    // would clobber the main editor's classes and leave nodes unrendered.
+    // Reuse the already-registered types instead.
+    if (opts.reuseTypes) {
+      metas.forEach((m) => (this.types[m.type] = m));
+    } else {
+      LiteGraph.registered_node_types = {};
+      LiteGraph.searchbox_extras = {};
+      metas.forEach((m) => {
+        this.types[m.type] = m;
+        LiteGraph.registerNodeType("nbt/" + m.type, this.makeClass(m));
+      });
+    }
 
     this.graph = new LGraph();
     this.canvas = new LGraphCanvas(el, this.graph);
     // Disable the double-click (and shift-drag) "add node" search dialog.
     // Nodes are added via the right-click menu, the toolbar, and the palette.
     this.canvas.allow_searchbox = false;
+    if (this.readOnly) {
+      this.canvas.read_only = true; // block edits / connections
+      this.canvas.allow_interaction = false; // also block widget clicks
+    }
     this.installAutoId();
     this.installKeyGuard();
     this.installHiDPI();
@@ -267,6 +295,10 @@ export class NbtGraph {
           node.title = auto;
         }
       }
+      self.onGraphChange?.();
+    };
+    this.graph.onNodeRemoved = function () {
+      self.onGraphChange?.();
     };
   }
 
@@ -287,10 +319,12 @@ export class NbtGraph {
   resize() {
     const parent = this.el.parentElement;
     if (!parent) return;
-    const r = parent.getBoundingClientRect();
+    // clientWidth/Height are layout sizes, unaffected by CSS transforms (a
+    // modal's open animation scales the box, which would corrupt
+    // getBoundingClientRect and leave the canvas mis-sized).
     const dpr = window.devicePixelRatio || 1;
-    const w = Math.max(1, Math.round(r.width));
-    const h = Math.max(1, Math.round(r.height));
+    const w = Math.max(1, Math.round(parent.clientWidth));
+    const h = Math.max(1, Math.round(parent.clientHeight));
     // CSS (layout) size in CSS pixels…
     this.el.style.width = w + "px";
     this.el.style.height = h + "px";
@@ -424,6 +458,7 @@ export class NbtGraph {
     });
     this.installAutoId();
     this.canvas.setDirty(true, true);
+    this.onGraphChange?.();
   }
 
   setTheme(dark: boolean) {
