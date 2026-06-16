@@ -47,6 +47,12 @@ export class NbtGraph {
   private counter = 0;
   private orphans: GraphNode[] = [];
   private keyGuard?: (e: KeyboardEvent) => void;
+  // set by the React layer to open a code-editor modal for a text field
+  onEdit?: (req: {
+    title: string;
+    value: string;
+    apply: (v: string) => void;
+  }) => void;
 
   constructor(el: HTMLCanvasElement, metas: NodeMeta[]) {
     this.el = el;
@@ -96,7 +102,9 @@ export class NbtGraph {
   }
 
   private makeClass(meta: NodeMeta) {
+    const controller = this;
     function N(this: any) {
+      const node = this;
       if (!meta.is_trigger) this.addInput("in", "flow");
       this.addOutput("out", "flow");
       this.w = {} as Record<string, any>;
@@ -115,6 +123,17 @@ export class NbtGraph {
         } else {
           this.w[p.name] = this.addWidget(
             "text", p.name, String(p.default), () => {});
+          // "✎" button to edit large values (HTML/JSON/…) in a code editor
+          this.addWidget("button", "✎ edit " + p.name, null, () => {
+            controller.onEdit?.({
+              title: p.name,
+              value: String(node.w[p.name].value ?? ""),
+              apply: (v: string) => {
+                node.w[p.name].value = v;
+                controller.canvas.setDirty(true, true);
+              },
+            });
+          });
         }
       });
       this.cw = this.addWidget(

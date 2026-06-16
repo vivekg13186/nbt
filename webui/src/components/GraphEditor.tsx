@@ -1,9 +1,16 @@
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState } from "react";
 import { App as AntApp, Empty, Spin } from "antd";
 import { useStore } from "../store";
 import { api } from "../api";
 import { NbtGraph } from "../graph/nbtGraph";
 import { activeGraphRef } from "../graph/active";
+import ValueEditorModal from "./ValueEditorModal";
+
+interface EditReq {
+  title: string;
+  value: string;
+  apply: (v: string) => void;
+}
 
 export default function GraphEditor() {
   const { message } = AntApp.useApp();
@@ -14,6 +21,7 @@ export default function GraphEditor() {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const gRef = useRef<NbtGraph | null>(null);
   const loadedFlow = useRef<string | null>(null);
+  const [edit, setEdit] = useState<EditReq | null>(null);
 
   // Build the controller once node metadata is available.
   useEffect(() => {
@@ -21,6 +29,7 @@ export default function GraphEditor() {
     const g = new NbtGraph(canvasRef.current, nodes);
     gRef.current = g;
     activeGraphRef.current = g;
+    g.onEdit = (req) => setEdit(req);
     g.setTheme(true);
     g.resize();
 
@@ -74,6 +83,16 @@ export default function GraphEditor() {
           />
         </div>
       )}
+      <ValueEditorModal
+        open={!!edit}
+        title={edit?.title ?? ""}
+        initialValue={edit?.value ?? ""}
+        onSave={(v) => {
+          edit?.apply(v);
+          setEdit(null);
+        }}
+        onCancel={() => setEdit(null)}
+      />
     </div>
   );
 }
