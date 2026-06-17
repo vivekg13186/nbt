@@ -1,4 +1,4 @@
-import { useEffect, useState } from "react";
+import { lazy, Suspense, useEffect, useState } from "react";
 import { App as AntApp } from "antd";
 import { FileJson } from "lucide-react";
 import { useStore } from "./store";
@@ -9,11 +9,14 @@ import Toolbar from "./components/Toolbar";
 import IconRail from "./components/IconRail";
 import Sidebar from "./components/Sidebar";
 import GraphEditor from "./components/GraphEditor";
-import EnvEditor from "./components/EnvEditor";
-import ListenersPage from "./components/ListenersPage";
-import RunsPage from "./components/RunsPage";
-import PackagesPage from "./components/PackagesPage";
-import Terminal from "./components/Terminal";
+
+// Lazy-loaded on demand so their heavy deps (CodeMirror, xterm) stay out of
+// the initial bundle until the relevant view/panel is opened.
+const EnvEditor = lazy(() => import("./components/EnvEditor"));
+const ListenersPage = lazy(() => import("./components/ListenersPage"));
+const RunsPage = lazy(() => import("./components/RunsPage"));
+const PackagesPage = lazy(() => import("./components/PackagesPage"));
+const Terminal = lazy(() => import("./components/Terminal"));
 
 export default function App() {
   const { message } = AntApp.useApp();
@@ -136,11 +139,13 @@ export default function App() {
           >
             <GraphEditor />
           </div>
-          {view === "environment" && <EnvEditor />}
-          {view === "listeners" && <ListenersPage />}
-          {view === "runs" && <RunsPage />}
-          {view === "packages" && <PackagesPage />}
-          {terminalOpen && <Terminal />}
+          <Suspense fallback={<div className="nbt-empty">Loading…</div>}>
+            {view === "environment" && <EnvEditor />}
+            {view === "listeners" && <ListenersPage />}
+            {view === "runs" && <RunsPage />}
+            {view === "packages" && <PackagesPage />}
+            {terminalOpen && <Terminal />}
+          </Suspense>
         </div>
       </div>
 

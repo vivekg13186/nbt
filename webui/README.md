@@ -52,8 +52,10 @@ npm run build                        # outputs to webui/dist/
   glyph) for **Save / Rename / Duplicate / Close / Delete / Export JSON**. `+`
   adds a workflow; the up/down-arrow buttons **import** (`.json`) and **export**
   the active workflow.
-- **Toolbar** — active workflow name, **Add node**, **environment** selector,
-  **Save**, **Listen**, **Run**, and toggles for the **Log** and **Shell** tabs.
+- **Toolbar** — active workflow name, **Add node**, an editing group (**undo**,
+  **redo**, **auto-layout**, **zoom-to-fit**, **minimap** toggle, and a
+  **shortcuts** help button), **environment** selector, **Save**, **Listen**,
+  **Run**, and toggles for the **Log** and **Shell** tabs.
 - **Left icon rail** — switch between **Workflows**, **Nodes**, **Packages**,
   **Environments**, **Listeners**, and **Executions**. The rail also
   shows/hides the sidebar.
@@ -63,7 +65,9 @@ npm run build                        # outputs to webui/dist/
     **Add node**, or click a node in the Nodes palette; drag `out → in` to
     connect (nodes grow extra input pins for joins); pan/zoom with the mouse.
     Each node field has a `</>` code-editor dialog (CodeMirror, JSON/HTML/JS
-    highlighting) for large values.
+    highlighting) for large values. The canvas has **undo/redo**,
+    **copy/paste between workflows**, **duplicate**, **auto-layout**,
+    **zoom-to-fit**, and a draggable **minimap**; see *Keyboard shortcuts* below.
   - *Nodes*: searchable palette grouped by category; click to add to the canvas.
   - *Packages*: install/update/remove node packages from a git URL or a
     `.nbtpack`/`.zip` bundle (with load-error reporting).
@@ -75,6 +79,25 @@ npm run build                        # outputs to webui/dist/
   WebSocket) and a **Log** stream of run/listener/package output.
 - **Drag-and-drop** anywhere on the window: a `.json` imports as a new workflow;
   a `.nbtpack`/`.zip` installs as a node package.
+
+## Keyboard shortcuts
+
+Shortcuts act on the editor only while the canvas has focus (click it first), so
+typing in node fields, dialogs, and the shell is never intercepted:
+
+| Shortcut | Action |
+| --- | --- |
+| `Ctrl/⌘ Z` | Undo |
+| `Ctrl/⌘ ⇧ Z` or `Ctrl/⌘ Y` | Redo |
+| `Ctrl/⌘ C` / `X` / `V` | Copy / Cut / Paste (works across workflows) |
+| `Ctrl/⌘ D` | Duplicate selection |
+| `Ctrl/⌘ A` | Select all |
+| `Ctrl/⌘ S` | Save workflow |
+| `F` | Zoom to fit |
+| `L` | Auto-layout |
+| `Delete` | Delete selection |
+
+The same list is in the toolbar's keyboard-icon popover.
 
 ## Notes
 

@@ -4,6 +4,46 @@
 import { LiteGraph, LGraph, LGraphCanvas } from "litegraph.js";
 import type { Graph, GraphNode, NodeMeta } from "../types";
 
+// ---- cross-flow clipboard -------------------------------------------------
+// Copy/paste must survive switching flows (the editor reuses one NbtGraph
+// instance and swaps graphs), so the clipboard lives at module scope. We also
+// mirror it to localStorage as a best effort so copy works across windows.
+interface ClipNode {
+  note?: boolean;
+  text?: string;
+  type?: string;
+  title?: string;
+  params?: Record<string, unknown>;
+  pre?: string;
+  post?: string;
+  out_aliases?: Record<string, string>;
+  pos: [number, number];
+  size?: [number, number];
+}
+interface Clip {
+  nodes: ClipNode[];
+  links: [number, number][]; // indices into nodes[]
+}
+const CLIP_KEY = "nbt.clipboard";
+let clipboard: Clip | null = null;
+function writeClipboard(c: Clip) {
+  clipboard = c;
+  try {
+    localStorage.setItem(CLIP_KEY, JSON.stringify(c));
+  } catch {
+    /* storage unavailable: module var still works within this window */
+  }
+}
+function readClipboard(): Clip | null {
+  if (clipboard) return clipboard;
+  try {
+    const s = localStorage.getItem(CLIP_KEY);
+    return s ? (JSON.parse(s) as Clip) : null;
+  } catch {
+    return null;
+  }
+}
+
 // A LiteGraph input slot holds a single link, so to allow joins (a node with
 // several parents) we give nodes a dynamic number of flow input pins: there is
 // always exactly one free "in" pin, and a new one appears each time you wire a
@@ -99,6 +139,7 @@ function editWidget(
         apply: (v: string) => {
           this.value = v;
           controller.canvas.setDirty(true, true);
+          controller.scheduleRecord();
         },
       });
       return true;
@@ -123,7 +164,18 @@ export class NbtGraph {
   private counter = 0;
   private orphans: GraphNode[] = [];
   private keyGuard?: (e: KeyboardEvent) => void;
+  private mmHandlers: Array<[string, (e: any) => void]> = [];
+  private mmRect?: {
+    x0: number; y0: number; w: number; h: number;
+    minx: number; miny: number; s: number; ox: number; oy: number;
+  };
   readOnly = false; // when true: view-only (snapshot), no edits / value dialog
+  showMinimap = true;
+  // undo/redo history (snapshots of exportGraph JSON)
+  private history: string[] = [];
+  private histIndex = -1;
+  private restoring = false;
+  private recordTimer: ReturnType<typeof setTimeout> | null = null;
   // set by the React layer to open a code-editor modal for a text field
   onEdit?: (req: {
     title: string;
@@ -132,6 +184,10 @@ export class NbtGraph {
   }) => void;
   // fired when nodes are added/removed/loaded (so the UI can react)
   onGraphChange?: () => void;
+  // fired when the undo/redo stack changes (so the toolbar can enable buttons)
+  onHistoryChange?: () => void;
+  // fired on Ctrl/Cmd+S (the React layer saves the active flow)
+  onSave?: () => void;
 
   // does the graph currently contain a trigger node?
   hasTrigger(): boolean {
@@ -182,27 +238,68 @@ export class NbtGraph {
     this.installAutoId();
     this.installKeyGuard();
     this.installHiDPI();
+    this.installMinimap();
     // NOTE: do NOT call graph.start(). LGraphCanvas already runs its own
     // requestAnimationFrame render loop (startRendering); graph.start() adds a
     // second per-frame runStep loop that re-executes nodes and double-drives
     // redraws, which makes nodes flicker on update.
+    this.initHistory();
   }
 
-  // Stop Backspace from deleting the selected node / navigating the browser
-  // back. We capture on the canvas' parent (runs before LiteGraph's own
-  // capture-phase key handler) and only block when focus is on the canvas,
-  // so Backspace still works inside node text-widget inputs. Delete still
-  // removes nodes.
+  // Keyboard shortcuts + the Backspace guard. We capture on the canvas' parent
+  // (runs before LiteGraph's own capture-phase key handler) and only act when
+  // focus is on the canvas, so typing in node text widgets / modals is never
+  // hijacked. Backspace is swallowed so it can't delete a node or navigate the
+  // browser back; Delete still removes nodes (handled by LiteGraph).
   private installKeyGuard() {
     const parent = this.el.parentElement;
     if (!parent) return;
     this.keyGuard = (e: KeyboardEvent) => {
-      if (e.key !== "Backspace") return;
       const t = e.target as HTMLElement | null;
       const tag = t?.localName;
       if (tag === "input" || tag === "textarea" || t?.isContentEditable) return;
-      e.preventDefault();
-      e.stopPropagation();
+      const mod = e.ctrlKey || e.metaKey;
+      const k = e.key.toLowerCase();
+      // always swallow a bare Backspace over the canvas
+      if (e.key === "Backspace" && !mod) {
+        e.preventDefault();
+        e.stopPropagation();
+        return;
+      }
+      if (this.readOnly) return;
+      const stop = () => {
+        e.preventDefault();
+        e.stopPropagation();
+      };
+      if (mod && k === "z") {
+        stop();
+        if (e.shiftKey) this.redo();
+        else this.undo();
+      } else if (mod && k === "y") {
+        stop();
+        this.redo();
+      } else if (mod && k === "c") {
+        if (this.copySelection()) stop();
+      } else if (mod && k === "x") {
+        if (this.cut()) stop();
+      } else if (mod && k === "v") {
+        if (this.paste()) stop();
+      } else if (mod && k === "d") {
+        stop();
+        this.duplicate();
+      } else if (mod && k === "a") {
+        stop();
+        this.selectAll();
+      } else if (mod && k === "s") {
+        stop();
+        this.onSave?.();
+      } else if (!mod && k === "f") {
+        stop();
+        this.zoomToFit();
+      } else if (!mod && k === "l") {
+        stop();
+        this.autoLayout();
+      }
     };
     parent.addEventListener("keydown", this.keyGuard, true);
   }
@@ -213,17 +310,18 @@ export class NbtGraph {
       if (!meta.is_trigger) this.addInput("in", "flow");
       this.addOutput("out", "flow");
       this.w = {} as Record<string, any>;
+      const rec = () => controller.scheduleRecord();
       meta.params.forEach((p) => {
         if (p.kind === "bool") {
           this.w[p.name] = this.addWidget(
-            "toggle", p.name, !!p.default, () => {});
+            "toggle", p.name, !!p.default, rec);
         } else if (p.kind === "int") {
           this.w[p.name] = this.addWidget(
-            "number", p.name, Number(p.default), () => {},
+            "number", p.name, Number(p.default), rec,
             { step: 10, precision: 0 });
         } else if (p.kind === "float") {
           this.w[p.name] = this.addWidget(
-            "number", p.name, Number(p.default), () => {},
+            "number", p.name, Number(p.default), rec,
             { step: 1, precision: 2 });
         } else {
           // custom widget: value box + icon -> opens the code-editor dialog
@@ -233,9 +331,9 @@ export class NbtGraph {
       });
       this.cw = this.addWidget(
         "text", meta.is_trigger ? "pre (filter)" : "pre",
-        "", () => {});
+        "", rec);
       if (!meta.is_trigger) {
-        this.aw = this.addWidget("text", "post", "", () => {});
+        this.aw = this.addWidget("text", "post", "", rec);
       }
       this.ow = {} as Record<string, any>;
       meta.outputs.forEach((o) => {
@@ -325,6 +423,7 @@ export class NbtGraph {
         apply: (v: string) => {
           node.properties.text = v;
           node.setDirtyCanvas?.(true, true);
+          controller.scheduleRecord();
         },
       });
     };
@@ -374,9 +473,18 @@ export class NbtGraph {
         }
       }
       self.onGraphChange?.();
+      self.scheduleRecord();
     };
     this.graph.onNodeRemoved = function () {
       self.onGraphChange?.();
+      self.scheduleRecord();
+    };
+    // wiring / unwiring links and dragging nodes are undoable too
+    this.graph.onConnectionChange = function () {
+      self.scheduleRecord();
+    };
+    this.canvas.onNodeMoved = function () {
+      self.scheduleRecord();
     };
   }
 
@@ -392,6 +500,449 @@ export class NbtGraph {
       ctx.scale(d * this.scale, d * this.scale);
       ctx.translate(this.offset[0], this.offset[1]);
     };
+  }
+
+  // ---------------- undo / redo ----------------
+  private snapshot(): string {
+    return JSON.stringify(this.exportGraph());
+  }
+
+  // (re)start the history with the current graph as the only entry
+  initHistory() {
+    this.history = [this.snapshot()];
+    this.histIndex = 0;
+    this.onHistoryChange?.();
+  }
+
+  // debounced record — coalesces a drag / typing burst into one entry
+  scheduleRecord() {
+    if (this.restoring || this.readOnly) return;
+    if (this.recordTimer) clearTimeout(this.recordTimer);
+    this.recordTimer = setTimeout(() => {
+      this.recordTimer = null;
+      this.recordHistory();
+    }, 250);
+  }
+
+  recordHistory() {
+    if (this.restoring || this.readOnly) return;
+    const snap = this.snapshot();
+    if (snap === this.history[this.histIndex]) return; // nothing changed
+    // drop any redo branch, then append
+    this.history = this.history.slice(0, this.histIndex + 1);
+    this.history.push(snap);
+    if (this.history.length > 120) this.history.shift();
+    this.histIndex = this.history.length - 1;
+    this.onHistoryChange?.();
+  }
+
+  canUndo(): boolean {
+    return this.histIndex > 0;
+  }
+  canRedo(): boolean {
+    return this.histIndex < this.history.length - 1;
+  }
+
+  undo() {
+    if (!this.canUndo()) return;
+    this.histIndex--;
+    this.applyHistory();
+  }
+  redo() {
+    if (!this.canRedo()) return;
+    this.histIndex++;
+    this.applyHistory();
+  }
+
+  private applyHistory() {
+    this.restoring = true;
+    try {
+      this.importGraph(JSON.parse(this.history[this.histIndex]));
+    } finally {
+      this.restoring = false;
+    }
+    this.onHistoryChange?.();
+  }
+
+  // ---------------- selection / clipboard ----------------
+  private selectedNodes(): any[] {
+    const sel = this.canvas.selected_nodes;
+    return sel ? Object.values(sel) : [];
+  }
+
+  selectAll() {
+    const all = this.graph._nodes || [];
+    if (typeof this.canvas.selectNodes === "function") {
+      this.canvas.selectNodes(all);
+    } else {
+      all.forEach((n: any) => this.canvas.selectNode(n, true));
+    }
+    this.canvas.setDirty(true, true);
+  }
+
+  deleteSelection() {
+    const sel = this.selectedNodes();
+    if (!sel.length) return;
+    sel.forEach((n: any) => this.graph.remove(n));
+    this.canvas.setDirty(true, true);
+    this.recordHistory();
+  }
+
+  private clipSerialize(n: any): ClipNode | null {
+    const pos: [number, number] = [n.pos[0], n.pos[1]];
+    const size: [number, number] | undefined = n.size
+      ? [n.size[0], n.size[1]]
+      : undefined;
+    if (n.nbtType === "note") {
+      return { note: true, text: String(n.properties?.text || ""), pos, size };
+    }
+    if (!n.nbtType || !this.types[n.nbtType]) return null;
+    const params: Record<string, unknown> = {};
+    for (const k in n.w) params[k] = n.w[k].value;
+    const aliases: Record<string, string> = {};
+    for (const o in n.ow) {
+      const v = String(n.ow[o].value || "").trim();
+      if (v) aliases[o] = v;
+    }
+    return {
+      type: n.nbtType,
+      title: String(n.title || ""),
+      params,
+      pre: n.cw ? String(n.cw.value || "") : "",
+      post: n.aw ? String(n.aw.value || "") : "",
+      out_aliases: aliases,
+      pos,
+      size,
+    };
+  }
+
+  private serializeSelection(): Clip | null {
+    const sel = this.selectedNodes().filter(
+      (n: any) => n.nbtType && (n.nbtType === "note" || this.types[n.nbtType]),
+    );
+    if (!sel.length) return null;
+    const idx = new Map<any, number>();
+    sel.forEach((n, i) => idx.set(n, i));
+    const nodes = sel.map((n: any) => this.clipSerialize(n)!) as ClipNode[];
+    const links: [number, number][] = [];
+    for (const id in this.graph.links) {
+      const l = this.graph.links[id];
+      if (!l) continue;
+      const a = this.graph.getNodeById(l.origin_id);
+      const b = this.graph.getNodeById(l.target_id);
+      if (a && b && idx.has(a) && idx.has(b)) {
+        links.push([idx.get(a)!, idx.get(b)!]);
+      }
+    }
+    return { nodes, links };
+  }
+
+  copySelection(): boolean {
+    const c = this.serializeSelection();
+    if (!c) return false;
+    writeClipboard(c);
+    return true;
+  }
+
+  cut(): boolean {
+    if (!this.copySelection()) return false;
+    this.deleteSelection();
+    return true;
+  }
+
+  paste(): boolean {
+    const c = readClipboard();
+    if (!c || !c.nodes.length) return false;
+    return this.placeClip(c, this.viewCenterTopLeft());
+  }
+
+  duplicate(): boolean {
+    const c = this.serializeSelection();
+    if (!c) return false;
+    const minx = Math.min(...c.nodes.map((n) => n.pos[0]));
+    const miny = Math.min(...c.nodes.map((n) => n.pos[1]));
+    return this.placeClip(c, [minx + 30, miny + 30]);
+  }
+
+  // world coord where the top-left of a pasted block should land (near the
+  // centre of the current viewport, so it's always visible)
+  private viewCenterTopLeft(): [number, number] {
+    const ds = this.canvas.ds;
+    const scale = ds.scale || 1;
+    const cssW = this.el.clientWidth || 800;
+    const cssH = this.el.clientHeight || 600;
+    return [cssW / (2 * scale) - ds.offset[0] - 80,
+      cssH / (2 * scale) - ds.offset[1] - 50];
+  }
+
+  // recreate clip nodes (with fresh ids) at `target`, reconnect internal
+  // links, select them, and record one history entry.
+  private placeClip(clip: Clip, target: [number, number]): boolean {
+    if (this.readOnly || !clip.nodes.length) return false;
+    const minx = Math.min(...clip.nodes.map((n) => n.pos[0]));
+    const miny = Math.min(...clip.nodes.map((n) => n.pos[1]));
+    const created: any[] = [];
+    clip.nodes.forEach((cn) => {
+      const node = LiteGraph.createNode(
+        "nbt/" + (cn.note ? "note" : cn.type));
+      if (!node) {
+        created.push(null);
+        return;
+      }
+      node.pos = [
+        target[0] + (cn.pos[0] - minx),
+        target[1] + (cn.pos[1] - miny),
+      ];
+      if (cn.size) node.size = [cn.size[0], cn.size[1]];
+      this.graph.add(node); // onNodeAdded assigns a unique nbt_id
+      if (cn.note) {
+        node.properties.text = cn.text || "";
+      } else {
+        if (cn.title) {
+          node.title = cn.title;
+          node.properties.nbt_name = cn.title;
+        }
+        for (const k in cn.params || {}) {
+          if (node.w[k] !== undefined) node.w[k].value = cn.params![k];
+        }
+        if (node.cw) node.cw.value = cn.pre || "";
+        if (node.aw) node.aw.value = cn.post || "";
+        for (const o in cn.out_aliases || {}) {
+          if (node.ow[o]) node.ow[o].value = cn.out_aliases![o];
+        }
+      }
+      created.push(node);
+    });
+    clip.links.forEach(([a, b]) => {
+      const na = created[a];
+      const nb = created[b];
+      if (na && nb) na.connect(0, nb, freeInputSlot(nb));
+    });
+    if (typeof this.canvas.deselectAllNodes === "function") {
+      this.canvas.deselectAllNodes();
+    }
+    created.forEach((n) => n && this.canvas.selectNode(n, true));
+    this.canvas.setDirty(true, true);
+    this.recordHistory();
+    return created.some(Boolean);
+  }
+
+  // ---------------- auto-layout / fit ----------------
+  // Longest-path layered layout: each node sits in a column one past its
+  // deepest parent, stacked vertically within the column.
+  autoLayout() {
+    if (this.readOnly) return;
+    const nodes = (this.graph._nodes || []).filter(
+      (n: any) => n.nbtType && n.nbtType !== "note" && this.types[n.nbtType]);
+    if (!nodes.length) return;
+    const parents = new Map<any, any[]>();
+    nodes.forEach((n: any) => parents.set(n, []));
+    for (const id in this.graph.links) {
+      const l = this.graph.links[id];
+      if (!l) continue;
+      const a = this.graph.getNodeById(l.origin_id);
+      const b = this.graph.getNodeById(l.target_id);
+      if (a && b && parents.has(b) && parents.has(a)) parents.get(b)!.push(a);
+    }
+    const layer = new Map<any, number>();
+    const visiting = new Set<any>();
+    const calc = (n: any): number => {
+      if (layer.has(n)) return layer.get(n)!;
+      if (visiting.has(n)) return 0; // cycle guard
+      visiting.add(n);
+      const ps = parents.get(n)!;
+      const v = ps.length ? Math.max(...ps.map(calc)) + 1 : 0;
+      visiting.delete(n);
+      layer.set(n, v);
+      return v;
+    };
+    nodes.forEach(calc);
+    const byLayer = new Map<number, any[]>();
+    nodes.forEach((n: any) => {
+      const L = layer.get(n)!;
+      if (!byLayer.has(L)) byLayer.set(L, []);
+      byLayer.get(L)!.push(n);
+    });
+    const colGap = 110;
+    const rowGap = 46;
+    let x = 80;
+    const maxLayer = Math.max(...layer.values());
+    for (let L = 0; L <= maxLayer; L++) {
+      const col = byLayer.get(L) || [];
+      col.sort((a, b) => a.pos[1] - b.pos[1]); // keep rough vertical order
+      const colW = Math.max(240, ...col.map((n) => (n.size ? n.size[0] : 240)));
+      let y = 80;
+      col.forEach((n: any) => {
+        n.pos = [x, y];
+        y += (n.size ? n.size[1] : 120) + rowGap;
+      });
+      x += colW + colGap;
+    }
+    this.canvas.setDirty(true, true);
+    this.recordHistory();
+    this.zoomToFit();
+  }
+
+  // Pan/zoom so the whole graph fits the viewport.
+  zoomToFit(pad = 60) {
+    const nodes = this.graph._nodes || [];
+    if (!nodes.length) return;
+    let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
+    nodes.forEach((n: any) => {
+      const w = n.size ? n.size[0] : 200;
+      const h = n.size ? n.size[1] : 100;
+      minx = Math.min(minx, n.pos[0]);
+      miny = Math.min(miny, n.pos[1] - 24); // include the title bar
+      maxx = Math.max(maxx, n.pos[0] + w);
+      maxy = Math.max(maxy, n.pos[1] + h);
+    });
+    const bw = maxx - minx;
+    const bh = maxy - miny;
+    const cssW = this.el.clientWidth;
+    const cssH = this.el.clientHeight;
+    if (bw <= 0 || bh <= 0 || cssW <= 0 || cssH <= 0) return;
+    let scale = Math.min((cssW - pad * 2) / bw, (cssH - pad * 2) / bh);
+    scale = Math.max(0.1, Math.min(1.5, scale));
+    const ds = this.canvas.ds;
+    ds.scale = scale;
+    ds.offset[0] = (cssW / scale - bw) / 2 - minx;
+    ds.offset[1] = (cssH / scale - bh) / 2 - miny;
+    this.canvas.setDirty(true, true);
+  }
+
+  setMinimap(on: boolean) {
+    this.showMinimap = on;
+    this.canvas.setDirty(true, true);
+  }
+
+  // ---------------- minimap ----------------
+  private installMinimap() {
+    const self = this;
+    // draw the minimap on top of the rendered graph
+    const prev = this.canvas.onDrawForeground;
+    this.canvas.onDrawForeground = function (ctx: any, area: any) {
+      if (prev) prev.call(this, ctx, area);
+      self.drawMinimap(ctx);
+    };
+    if (this.readOnly) return; // view-only: no click-to-pan
+    // click / drag inside the minimap pans the view. Capture on the parent so
+    // we run before LiteGraph's own canvas drag handling.
+    const parent = this.el.parentElement;
+    if (!parent) return;
+    let dragging = false;
+    const toWorld = (e: MouseEvent): [number, number] | null => {
+      const mm = self.mmRect;
+      if (!mm || !self.showMinimap) return null;
+      const rect = self.el.getBoundingClientRect();
+      const px = e.clientX - rect.left;
+      const py = e.clientY - rect.top;
+      if (px < mm.x0 || px > mm.x0 + mm.w || py < mm.y0 || py > mm.y0 + mm.h) {
+        return null;
+      }
+      return [mm.minx + (px - mm.ox) / mm.s, mm.miny + (py - mm.oy) / mm.s];
+    };
+    const onDown = (e: MouseEvent) => {
+      const w = toWorld(e);
+      if (!w) return;
+      dragging = true;
+      self.centerOn(w[0], w[1]);
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    const onMove = (e: MouseEvent) => {
+      if (!dragging) return;
+      const w = toWorld(e);
+      if (w) self.centerOn(w[0], w[1]);
+      e.preventDefault();
+      e.stopPropagation();
+    };
+    const onUp = () => {
+      dragging = false;
+    };
+    parent.addEventListener("mousedown", onDown, true);
+    window.addEventListener("mousemove", onMove, true);
+    window.addEventListener("mouseup", onUp, true);
+    this.mmHandlers = [
+      ["mousedown", onDown],
+      ["mousemove", onMove],
+      ["mouseup", onUp],
+    ];
+  }
+
+  private centerOn(wx: number, wy: number) {
+    const ds = this.canvas.ds;
+    const scale = ds.scale || 1;
+    const cssW = this.el.clientWidth;
+    const cssH = this.el.clientHeight;
+    ds.offset[0] = cssW / (2 * scale) - wx;
+    ds.offset[1] = cssH / (2 * scale) - wy;
+    this.canvas.setDirty(true, true);
+  }
+
+  private drawMinimap(ctx: any) {
+    if (!this.showMinimap) return;
+    const nodes = this.graph._nodes || [];
+    if (!nodes.length) {
+      this.mmRect = undefined;
+      return;
+    }
+    const dpr = window.devicePixelRatio || 1;
+    const cssW = this.el.clientWidth;
+    const cssH = this.el.clientHeight;
+    const w = 184;
+    const h = 124;
+    const margin = 14;
+    const x0 = cssW - w - margin;
+    const y0 = cssH - h - margin;
+    ctx.save();
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0); // draw in CSS-pixel screen space
+    // panel
+    ctx.fillStyle = "rgba(18,18,18,0.82)";
+    ctx.strokeStyle = "rgba(255,255,255,0.18)";
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(x0, y0, w, h, 6);
+    ctx.fill();
+    ctx.stroke();
+    // graph bounds
+    let minx = Infinity, miny = Infinity, maxx = -Infinity, maxy = -Infinity;
+    nodes.forEach((n: any) => {
+      const nw = n.size ? n.size[0] : 200;
+      const nh = n.size ? n.size[1] : 100;
+      minx = Math.min(minx, n.pos[0]);
+      miny = Math.min(miny, n.pos[1]);
+      maxx = Math.max(maxx, n.pos[0] + nw);
+      maxy = Math.max(maxy, n.pos[1] + nh);
+    });
+    const bw = Math.max(1, maxx - minx);
+    const bh = Math.max(1, maxy - miny);
+    const pad = 8;
+    const s = Math.min((w - pad * 2) / bw, (h - pad * 2) / bh);
+    const ox = x0 + pad + ((w - pad * 2) - bw * s) / 2;
+    const oy = y0 + pad + ((h - pad * 2) - bh * s) / 2;
+    const mapX = (wx: number) => ox + (wx - minx) * s;
+    const mapY = (wy: number) => oy + (wy - miny) * s;
+    // nodes
+    nodes.forEach((n: any) => {
+      const nw = n.size ? n.size[0] : 200;
+      const nh = n.size ? n.size[1] : 100;
+      ctx.fillStyle =
+        n.nbtType === "note" ? "rgba(214,173,20,0.8)" : "rgba(91,143,217,0.9)";
+      ctx.fillRect(mapX(n.pos[0]), mapY(n.pos[1]),
+        Math.max(2, nw * s), Math.max(2, nh * s));
+    });
+    // viewport rectangle (visible world region)
+    const ds = this.canvas.ds;
+    const scale = ds.scale || 1;
+    const vx = -ds.offset[0];
+    const vy = -ds.offset[1];
+    const vw = cssW / scale;
+    const vh = cssH / scale;
+    ctx.strokeStyle = "rgba(255,255,255,0.95)";
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(mapX(vx), mapY(vy), vw * s, vh * s);
+    ctx.restore();
+    this.mmRect = { x0, y0, w, h, minx, miny, s, ox, oy };
   }
 
   resize() {
@@ -554,6 +1105,9 @@ export class NbtGraph {
     this.installAutoId();
     this.canvas.setDirty(true, true);
     this.onGraphChange?.();
+    // a fresh load starts a new history; undo/redo restores must not (they
+    // manage histIndex themselves and set `restoring`).
+    if (!this.restoring) this.initHistory();
   }
 
   setTheme(dark: boolean) {
@@ -565,9 +1119,20 @@ export class NbtGraph {
   }
 
   destroy() {
+    if (this.recordTimer) clearTimeout(this.recordTimer);
     if (this.keyGuard && this.el.parentElement) {
       this.el.parentElement.removeEventListener("keydown", this.keyGuard, true);
     }
+    // remove minimap pan listeners (mousedown on parent, move/up on window)
+    const parent = this.el.parentElement;
+    this.mmHandlers.forEach(([type, fn]) => {
+      if (type === "mousedown" && parent) {
+        parent.removeEventListener(type, fn, true);
+      } else {
+        window.removeEventListener(type, fn, true);
+      }
+    });
+    this.mmHandlers = [];
     try {
       this.canvas.stopRendering();
       this.graph.stop();

@@ -3,6 +3,7 @@ import {
   App as AntApp,
   Button,
   Dropdown,
+  Popover,
   Select,
   Space,
   Tag,
@@ -10,16 +11,34 @@ import {
 } from "antd";
 import {
   Copy,
+  Keyboard,
+  Map as MapIcon,
+  Maximize2,
+  Network,
   Play,
   Plus,
+  Redo2,
   Save,
   ScrollText,
   SquareTerminal,
+  Undo2,
   Zap,
 } from "lucide-react";
 import { useStore } from "../store";
 import { api } from "../api";
 import { activeGraphRef } from "../graph/active";
+
+const SHORTCUTS: [string, string][] = [
+  ["Ctrl/⌘ Z", "Undo"],
+  ["Ctrl/⌘ ⇧ Z  ·  Ctrl/⌘ Y", "Redo"],
+  ["Ctrl/⌘ C / X / V", "Copy / Cut / Paste"],
+  ["Ctrl/⌘ D", "Duplicate selection"],
+  ["Ctrl/⌘ A", "Select all"],
+  ["Ctrl/⌘ S", "Save workflow"],
+  ["F", "Zoom to fit"],
+  ["L", "Auto-layout"],
+  ["Delete", "Delete selection"],
+];
 
 export default function Toolbar() {
   const { message } = AntApp.useApp();
@@ -31,6 +50,10 @@ export default function Toolbar() {
   const activeEnvName = useStore((s) => s.activeEnvName);
   const setActiveEnv = useStore((s) => s.setActiveEnv);
   const view = useStore((s) => s.view);
+  const histCanUndo = useStore((s) => s.histCanUndo);
+  const histCanRedo = useStore((s) => s.histCanRedo);
+  const minimapOn = useStore((s) => s.minimapOn);
+  const toggleMinimap = useStore((s) => s.toggleMinimap);
   const terminalOpen = useStore((s) => s.terminalOpen);
   const bottomTab = useStore((s) => s.bottomTab);
   const toggleTerminal = useStore((s) => s.toggleTerminal);
@@ -149,6 +172,72 @@ export default function Toolbar() {
             Add node
           </Button>
         </Dropdown>
+      )}
+
+      {(view === "workflow" || view === "nodes") && flow && (
+        <Space.Compact size="small">
+          <Tooltip title="Undo (Ctrl/⌘ Z)">
+            <Button
+              icon={<Undo2 size={15} />}
+              disabled={!histCanUndo}
+              onClick={() => activeGraphRef.current?.undo()}
+            />
+          </Tooltip>
+          <Tooltip title="Redo (Ctrl/⌘ ⇧ Z)">
+            <Button
+              icon={<Redo2 size={15} />}
+              disabled={!histCanRedo}
+              onClick={() => activeGraphRef.current?.redo()}
+            />
+          </Tooltip>
+          <Tooltip title="Auto-layout (L)">
+            <Button
+              icon={<Network size={15} />}
+              onClick={() => activeGraphRef.current?.autoLayout()}
+            />
+          </Tooltip>
+          <Tooltip title="Zoom to fit (F)">
+            <Button
+              icon={<Maximize2 size={15} />}
+              onClick={() => activeGraphRef.current?.zoomToFit()}
+            />
+          </Tooltip>
+          <Tooltip title={minimapOn ? "Hide minimap" : "Show minimap"}>
+            <Button
+              type={minimapOn ? "primary" : "default"}
+              ghost={minimapOn}
+              icon={<MapIcon size={15} />}
+              onClick={toggleMinimap}
+            />
+          </Tooltip>
+          <Popover
+            trigger="click"
+            placement="bottomRight"
+            title="Keyboard shortcuts"
+            content={
+              <div style={{ display: "grid", gap: 4, minWidth: 220 }}>
+                {SHORTCUTS.map(([keys, label]) => (
+                  <div
+                    key={label}
+                    style={{ display: "flex", justifyContent: "space-between", gap: 16 }}
+                  >
+                    <span style={{ opacity: 0.7 }}>{label}</span>
+                    <kbd style={{ fontFamily: "var(--nbt-mono, monospace)" }}>
+                      {keys}
+                    </kbd>
+                  </div>
+                ))}
+                <div style={{ opacity: 0.5, marginTop: 6, fontSize: 12 }}>
+                  Click the canvas first so it has keyboard focus.
+                </div>
+              </div>
+            }
+          >
+            <Tooltip title="Shortcuts">
+              <Button icon={<Keyboard size={15} />} />
+            </Tooltip>
+          </Popover>
+        </Space.Compact>
       )}
 
       <Space.Compact>

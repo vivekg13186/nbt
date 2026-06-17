@@ -1,10 +1,12 @@
-import { useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useEffect, useRef, useState } from "react";
 import { App as AntApp, Empty, Spin } from "antd";
 import { useStore } from "../store";
 import { api } from "../api";
 import { NbtGraph } from "../graph/nbtGraph";
 import { activeGraphRef } from "../graph/active";
-import ValueEditorModal from "./ValueEditorModal";
+
+// CodeMirror lives here; load it only when a field is first edited.
+const ValueEditorModal = lazy(() => import("./ValueEditorModal"));
 
 interface EditReq {
   title: string;
@@ -17,6 +19,8 @@ export default function GraphEditor() {
   const nodes = useStore((s) => s.nodes);
   const activeFlowId = useStore((s) => s.activeFlowId);
   const setFlowHasTrigger = useStore((s) => s.setFlowHasTrigger);
+  const setHistory = useStore((s) => s.setHistory);
+  const minimapOn = useStore((s) => s.minimapOn);
 
   const wrapRef = useRef<HTMLDivElement>(null);
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -33,6 +37,17 @@ export default function GraphEditor() {
     activeGraphRef.flowId = null;
     g.onEdit = (req) => setEdit(req);
     g.onGraphChange = () => setFlowHasTrigger(g.hasTrigger());
+    g.onHistoryChange = () => setHistory(g.canUndo(), g.canRedo());
+    // Ctrl/Cmd+S saves the flow the canvas is currently showing
+    g.onSave = () => {
+      const fid = activeGraphRef.flowId;
+      if (!activeGraphRef.current || !fid) return;
+      api
+        .saveGraph(fid, activeGraphRef.current.exportGraph())
+        .then(() => message.success("Saved"))
+        .catch((e) => message.error((e as Error).message));
+    };
+    g.setMinimap(useStore.getState().minimapOn);
     g.setTheme(true);
     g.resize();
 
@@ -53,6 +68,11 @@ export default function GraphEditor() {
       }
     };
   }, [nodes]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Reflect the minimap toggle onto the live controller.
+  useEffect(() => {
+    gRef.current?.setMinimap(minimapOn);
+  }, [minimapOn]);
 
   // Load the active flow's graph whenever it changes (and clear when none).
   useEffect(() => {
@@ -103,16 +123,20 @@ export default function GraphEditor() {
           />
         </div>
       )}
-      <ValueEditorModal
-        open={!!edit}
-        title={edit?.title ?? ""}
-        initialValue={edit?.value ?? ""}
-        onSave={(v) => {
-          edit?.apply(v);
-          setEdit(null);
-        }}
-        onCancel={() => setEdit(null)}
-      />
+      {edit && (
+        <Suspense fallback={null}>
+          <ValueEditorModal
+            open
+            title={edit.title}
+            initialValue={edit.value}
+            onSave={(v) => {
+              edit.apply(v);
+              setEdit(null);
+            }}
+            onCancel={() => setEdit(null)}
+          />
+        </Suspense>
+      )}
     </div>
   );
 }

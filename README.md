@@ -55,11 +55,29 @@ The database is created fresh on first launch (Demo Flow seeded).
 
 ## Using the editor
 
-The UI is dark-mode only. The tab bar holds open workflows (right-click a tab for Save / Rename / Duplicate / Close / Delete / Export JSON), with buttons to add, import (`.json`) and export workflows. The toolbar has the active workflow name, Add node, the environment picker, Save / Listen / Run, and toggles for the bottom panel. The left rail switches between Workflows, Nodes, Packages, Environments, Listeners and Executions. The **Packages** view installs groups of custom nodes from a git URL or a `.nbtpack`/`.zip` bundle (see `docs/CUSTOM_NODES.md`).
+The UI is dark-mode only. The tab bar holds open workflows (right-click a tab for Save / Rename / Duplicate / Close / Delete / Export JSON), with buttons to add, import (`.json`) and export workflows. The toolbar has the active workflow name, Add node, an editing group (undo, redo, auto-layout, zoom-to-fit, minimap toggle, and a shortcuts help button), the environment picker, Save / Listen / Run, and toggles for the bottom panel. The left rail switches between Workflows, Nodes, Packages, Environments, Listeners and Executions. The **Packages** view installs groups of custom nodes from a git URL or a `.nbtpack`/`.zip` bundle (see `docs/CUSTOM_NODES.md`).
 
 To add a node use the Nodes palette, the toolbar's Add node, or right-click the canvas. **Add node → 📝 Note** drops a free-text annotation block (double-click to edit; resizable) — notes are saved with the workflow but ignored by the engine. Drag from a node's `out` pin to another node's `in` pin to connect; a node grows extra input pins as you connect more parents (joins). The canvas pans/zooms with the mouse and is HiDPI-aware. The bottom panel has two tabs — an interactive **Shell** (a real PTY into the server) and a **Log** stream of run/listener output — toggled from the toolbar. The Executions page lists runs; click one for step inputs/outputs/error detail (Display nodes render their content here). You can also drag a workflow `.json` (imports as a new workflow) or a `.nbtpack`/`.zip` (installs as a package) anywhere onto the window. The Workflows sidebar can **export all workflows** (header download button) or **a single folder** (download icon on the folder header) as a `.zip` of importable `<folder>/<name>.json` files — handy for backing flows up to a git repo.
 
 Each node has its declared **inputs**, a **pre** expression (falsy → node is skipped) and a **post** expression (falsy → node fails). Every text field has a code-editor dialog (the `</>`-style icon) for large values with JSON/HTML/JS highlighting. Edit a node's name via its title (right-click node → Title). Each declared output gets an alias box: type a variable name (e.g. `casenumber`) and that output is published flat into the context — later nodes can use `casenumber` / `{{ casenumber }}` / `ctx['casenumber']`. Use `last` for the first connected parent's outputs and `ins` for the list of all parents' outputs (joins).
+
+### Editor shortcuts & navigation
+
+The canvas keeps a full undo/redo history of node adds, moves, wiring, and field edits, and supports copy/paste **between workflows** (the clipboard survives switching tabs). A **minimap** in the bottom-right corner shows the whole graph and the current viewport — click or drag inside it to pan. **Auto-layout** arranges nodes into columns by dependency depth (one column past their deepest parent), and **zoom-to-fit** frames the entire graph. These are all on the toolbar's editing group, and most have keyboard shortcuts:
+
+| Shortcut | Action |
+| --- | --- |
+| `Ctrl/⌘ Z` | Undo |
+| `Ctrl/⌘ ⇧ Z` or `Ctrl/⌘ Y` | Redo |
+| `Ctrl/⌘ C` / `X` / `V` | Copy / Cut / Paste selection (works across workflows) |
+| `Ctrl/⌘ D` | Duplicate selection |
+| `Ctrl/⌘ A` | Select all |
+| `Ctrl/⌘ S` | Save workflow |
+| `F` | Zoom to fit |
+| `L` | Auto-layout |
+| `Delete` | Delete selection |
+
+Shortcuts act on the editor only while the canvas has keyboard focus, so click the canvas first; typing in node fields, dialogs, and the shell is never intercepted (`Backspace` won't delete a node). The same shortcut list is available from the keyboard-icon button in the toolbar.
 
 ## Versioning (snapshots)
 

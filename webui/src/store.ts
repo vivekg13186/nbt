@@ -40,6 +40,13 @@ interface State {
   setBottomTab: (t: "shell" | "log") => void;
   openBottom: (t: "shell" | "log") => void;
 
+  // editor: undo/redo availability + minimap toggle
+  histCanUndo: boolean;
+  histCanRedo: boolean;
+  setHistory: (canUndo: boolean, canRedo: boolean) => void;
+  minimapOn: boolean;
+  toggleMinimap: () => void;
+
   // open workflow tabs
   // whether the active flow's canvas contains a trigger node (-> show Listen)
   flowHasTrigger: boolean;
@@ -98,6 +105,17 @@ export const useStore = create<State>((set, get) => ({
   bottomTab: "shell",
   setBottomTab: (bottomTab) => set({ bottomTab }),
   openBottom: (bottomTab) => set({ terminalOpen: true, bottomTab }),
+
+  histCanUndo: false,
+  histCanRedo: false,
+  setHistory: (histCanUndo, histCanRedo) => set({ histCanUndo, histCanRedo }),
+  minimapOn: localStorage.getItem("nbt.minimap") !== "0",
+  toggleMinimap: () =>
+    set((s) => {
+      const minimapOn = !s.minimapOn;
+      localStorage.setItem("nbt.minimap", minimapOn ? "1" : "0");
+      return { minimapOn };
+    }),
 
   flowHasTrigger: false,
   setFlowHasTrigger: (flowHasTrigger) => set({ flowHasTrigger }),
