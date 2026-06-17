@@ -296,7 +296,8 @@ export default function TabBar() {
                 whiteSpace: "nowrap",
                 background: active ? "var(--nbt-active)" : "transparent",
                 color: active ? "var(--nbt-primary)" : "inherit",
-           
+           marginBottom: -4,
+           marginTop: -5,
               }}
             >
               <Dropdown menu={tabMenu(id)} trigger={["click"]}>
