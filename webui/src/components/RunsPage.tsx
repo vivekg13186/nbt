@@ -11,9 +11,30 @@ import {
 import { RefreshCw, Trash2 } from "lucide-react";
 import CodeMirror from "@uiw/react-codemirror";
 import { json } from "@codemirror/lang-json";
+import { html } from "@codemirror/lang-html";
+import { javascript } from "@codemirror/lang-javascript";
+import { python } from "@codemirror/lang-python";
 import { vscodeDark } from "@uiw/codemirror-theme-vscode";
+import type { Extension } from "@codemirror/state";
 import { api } from "../api";
 import type { Execution, ExecutionDetail, ExecutionStep } from "../types";
+
+function langExt(lang: string): Extension[] {
+  switch (lang) {
+    case "json":
+      return [json()];
+    case "html":
+      return [html()];
+    case "javascript":
+    case "js":
+      return [javascript()];
+    case "python":
+    case "py":
+      return [python()];
+    default:
+      return [];
+  }
+}
 
 const statusColor: Record<string, string> = {
   passed: "success",
@@ -50,7 +71,7 @@ function renderStepBody(s: ExecutionStep) {
             value={out.content as string}
             theme={vscodeDark}
             editable={false}
-            extensions={lang === "json" ? [json()] : []}
+            extensions={langExt(lang)}
             maxHeight="400px"
           />
         </div>

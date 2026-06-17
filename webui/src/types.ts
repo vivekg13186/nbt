@@ -61,10 +61,17 @@ export interface GraphGroup {
   font_size?: number;
 }
 
+export interface GraphNote {
+  pos: [number, number];
+  size: [number, number];
+  text: string;
+}
+
 export interface Graph {
   nodes: GraphNode[];
   links: [string, string][];
   groups?: GraphGroup[];
+  notes?: GraphNote[];
 }
 
 export interface FlowSummary {

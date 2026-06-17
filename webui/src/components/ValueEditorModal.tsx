@@ -4,10 +4,11 @@ import CodeMirror from "@uiw/react-codemirror";
 import { json } from "@codemirror/lang-json";
 import { html } from "@codemirror/lang-html";
 import { javascript } from "@codemirror/lang-javascript";
+import { python } from "@codemirror/lang-python";
 import { vscodeDark } from "@uiw/codemirror-theme-vscode";
 import type { Extension } from "@codemirror/state";
 
-type Lang = "auto" | "json" | "html" | "javascript" | "text";
+type Lang = "auto" | "json" | "html" | "javascript" | "python" | "text";
 
 function guess(text: string): Exclude<Lang, "auto"> {
   const t = text.trim();
@@ -28,6 +29,8 @@ function extFor(lang: Exclude<Lang, "auto">): Extension[] {
       return [html()];
     case "javascript":
       return [javascript()];
+    case "python":
+      return [python()];
     default:
       return [];
   }
@@ -72,6 +75,7 @@ export default function ValueEditorModal({
               { label: "JSON", value: "json" },
               { label: "HTML", value: "html" },
               { label: "JS", value: "javascript" },
+              { label: "Python", value: "python" },
               { label: "Text", value: "text" },
             ]}
           />

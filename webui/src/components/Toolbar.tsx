@@ -92,20 +92,27 @@ export default function Toolbar() {
   }
 
   const addItems = {
-    items: Object.entries(
-      nodes.reduce<Record<string, typeof nodes>>((acc, n) => {
-        (acc[n.category] ||= []).push(n);
-        return acc;
-      }, {}),
-    ).map(([cat, list]) => ({
-      key: cat,
-      label: cat,
-      children: list.map((n) => ({
-        key: n.type,
-        label: n.label + (n.is_trigger ? " ⚡" : ""),
+    items: [
+      { key: "__note__", label: "📝 Note (annotation)" },
+      { type: "divider" as const },
+      ...Object.entries(
+        nodes.reduce<Record<string, typeof nodes>>((acc, n) => {
+          (acc[n.category] ||= []).push(n);
+          return acc;
+        }, {}),
+      ).map(([cat, list]) => ({
+        key: cat,
+        label: cat,
+        children: list.map((n) => ({
+          key: n.type,
+          label: n.label + (n.is_trigger ? " ⚡" : ""),
+        })),
       })),
-    })),
-    onClick: ({ key }: { key: string }) => addNode(key),
+    ],
+    onClick: ({ key }: { key: string }) => {
+      if (key === "__note__") activeGraphRef.current?.addNote();
+      else addNode(key);
+    },
   };
 
   return (

@@ -165,6 +165,9 @@ export class NbtGraph {
         this.types[m.type] = m;
         LiteGraph.registerNodeType("nbt/" + m.type, this.makeClass(m));
       });
+      // UI-only annotation node (not in `this.types`, so the engine never
+      // sees it; persisted separately as graph `notes`).
+      LiteGraph.registerNodeType("nbt/note", this.makeNoteClass());
     }
 
     this.graph = new LGraph();
@@ -259,6 +262,81 @@ export class NbtGraph {
       };
     }
     return N as any;
+  }
+
+  // A free-text annotation node ("Note"). No pins, not an engine node.
+  private makeNoteClass() {
+    const controller = this;
+    function Note(this: any) {
+      this.properties = { nbt_id: null, text: "" };
+      this.size = [240, 130];
+      this.resizable = true;
+      this.color = "#6b5e2a";
+      this.bgcolor = "#3a3320";
+    }
+    (Note as any).title = "Note";
+    (Note as any).prototype.nbtType = "note";
+    (Note as any).prototype.onDrawForeground = function (ctx: any) {
+      if (this.flags && this.flags.collapsed) return;
+      const pad = 8;
+      const lineH = 15;
+      const maxW = this.size[0] - pad * 2;
+      let y = pad + 12;
+      const text = String((this.properties && this.properties.text) || "");
+      ctx.save();
+      ctx.textAlign = "left";
+      ctx.font = '12px -apple-system, system-ui, "Segoe UI", sans-serif';
+      if (!text) {
+        ctx.fillStyle = "#c9c39a";
+        ctx.fillText("double-click to edit…", pad, y);
+        ctx.restore();
+        return;
+      }
+      ctx.fillStyle = "#f3eecb";
+      for (const raw of text.split("\n")) {
+        let cur = "";
+        for (const word of raw.split(" ")) {
+          const test = cur ? cur + " " + word : word;
+          if (ctx.measureText(test).width > maxW && cur) {
+            ctx.fillText(cur, pad, y);
+            y += lineH;
+            cur = word;
+          } else {
+            cur = test;
+          }
+          if (y > this.size[1] - 2) break;
+        }
+        ctx.fillText(cur, pad, y);
+        y += lineH;
+        if (y > this.size[1] - 2) break;
+      }
+      ctx.restore();
+    };
+    (Note as any).prototype.onDblClick = function (
+      _e: any,
+      _pos: any,
+      canvas: any,
+    ) {
+      if (canvas && canvas.read_only) return; // view-only
+      const node = this;
+      controller.onEdit?.({
+        title: "Note",
+        value: String((node.properties && node.properties.text) || ""),
+        apply: (v: string) => {
+          node.properties.text = v;
+          node.setDirtyCanvas?.(true, true);
+        },
+      });
+    };
+    return Note as any;
+  }
+
+  addNote() {
+    const n = LiteGraph.createNode("nbt/note");
+    if (!n) return;
+    const c = this.canvas.ds ? this.canvas.ds.offset : [0, 0];
+    n.pos = [80 - c[0] + Math.random() * 140, 80 - c[1] + Math.random() * 140];
+    this.graph.add(n);
   }
 
   // next unused node id (scans the graph so copy-paste can't collide)
@@ -395,7 +473,15 @@ export class NbtGraph {
       typeof g.serialize === "function"
         ? g.serialize()
         : { title: g.title, bounding: g.bounding, color: g.color });
-    return { nodes, links, groups };
+    // persist free-text Note annotations (UI-only; engine ignores them)
+    const notes = (this.graph._nodes || [])
+      .filter((n: any) => n.nbtType === "note")
+      .map((n: any) => ({
+        pos: [Math.round(n.pos[0]), Math.round(n.pos[1])],
+        size: [Math.round(n.size[0]), Math.round(n.size[1])],
+        text: String((n.properties && n.properties.text) || ""),
+      }));
+    return { nodes, links, groups, notes };
   }
 
   importGraph(data: Graph) {
@@ -455,6 +541,15 @@ export class NbtGraph {
       } catch {
         /* ignore malformed group */
       }
+    });
+    // restore Note annotations
+    ((data as Graph).notes || []).forEach((nd) => {
+      const n = LiteGraph.createNode("nbt/note");
+      if (!n) return;
+      n.pos = [(nd.pos && nd.pos[0]) || 60, (nd.pos && nd.pos[1]) || 60];
+      if (nd.size && nd.size.length === 2) n.size = [nd.size[0], nd.size[1]];
+      n.properties.text = String(nd.text || "");
+      this.graph.add(n);
     });
     this.installAutoId();
     this.canvas.setDirty(true, true);
