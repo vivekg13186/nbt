@@ -13,18 +13,21 @@ from __future__ import annotations
 
 import asyncio
 import functools
+import io
 import json
+import re
 import shutil
 import tempfile
 import threading
 import time
 import uuid
+import zipfile
 from collections import deque
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import (FastAPI, File, HTTPException, UploadFile, WebSocket,
-                     WebSocketDisconnect)
+from fastapi import (FastAPI, File, HTTPException, Response, UploadFile,
+                     WebSocket, WebSocketDisconnect)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.concurrency import run_in_threadpool
 from fastapi.staticfiles import StaticFiles
@@ -293,6 +296,31 @@ def create_app(db, registry) -> FastAPI:
     @app.get("/api/flows")
     def list_flows():
         return db.list_flows()
+
+    @app.get("/api/flows/export")
+    def export_flows(folder: Optional[str] = None):
+        """Zip of one importable <name>.json per flow (graph only), optionally
+        limited to a single folder. `folder=""` exports the ungrouped flows."""
+        def _safe(s):
+            return re.sub(r"[^A-Za-z0-9 _.\-]+", "_", s or "").strip() or "flow"
+
+        rows = db.list_flows()
+        if folder is not None:
+            rows = [r for r in rows if (r.get("folder") or "") == folder]
+        buf = io.BytesIO()
+        with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as z:
+            for r in rows:
+                flow = db.get_flow(r["id"])
+                if not flow:
+                    continue
+                fld = (flow.get("folder") or "").strip()
+                path = (f"{_safe(fld)}/" if fld else "") + _safe(flow["name"]) \
+                    + ".json"
+                z.writestr(path, json.dumps(flow["graph"], indent=2))
+        fname = (_safe(folder) if folder else "nbt-flows") + ".zip"
+        return Response(
+            content=buf.getvalue(), media_type="application/zip",
+            headers={"Content-Disposition": f'attachment; filename="{fname}"'})
 
     @app.get("/api/flows/{flow_id}")
     def get_flow(flow_id: str):

@@ -43,6 +43,13 @@ export const api = {
 
   // flows
   listFlows: () => req<FlowSummary[]>("/flows"),
+  // URL of the export zip (all flows, or one folder). folder "" = ungrouped.
+  exportFlowsUrl: (folder?: string | null) =>
+    BASE +
+    "/flows/export" +
+    (folder === undefined || folder === null
+      ? ""
+      : `?folder=${encodeURIComponent(folder)}`),
   getFlow: (id: string) => req<Flow>(`/flows/${id}`),
   createFlow: (name: string, graph?: Graph, folder?: string | null) =>
     req<Flow>("/flows", {
