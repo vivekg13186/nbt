@@ -81,6 +81,18 @@ class PackageManager:
     def _write_lock(self, data: dict) -> None:
         self.lockfile.write_text(json.dumps(data, indent=2))
 
+    def _node_count(self, folder_name: str, folder: Path) -> int:
+        """Number of registered node *types* in a package folder (a single
+        .py file can define several), falling back to a file count."""
+        if self.registry is not None:
+            prefix = "nbt_user_nodes_" + folder_name + "_"
+            n = sum(
+                1 for cls in self.registry.types.values()
+                if getattr(cls, "__module__", "").startswith(prefix))
+            if n:
+                return n
+        return _count_nodes(folder) if folder.is_dir() else 0
+
     # ---------------- listing ----------------
     def list(self) -> list[dict]:
         lock = self._read_lock()
@@ -91,7 +103,7 @@ class PackageManager:
                 **meta,
                 "name": name,
                 "installed": folder.is_dir(),
-                "node_count": _count_nodes(folder) if folder.is_dir() else 0,
+                "node_count": self._node_count(name, folder),
             }
         # also surface folders added manually (not via the manager)
         for child in sorted(self.nodes_dir.iterdir()):
@@ -100,7 +112,8 @@ class PackageManager:
                 out[child.name] = {
                     "name": child.name, "version": None,
                     "source": {"type": "local"}, "installed": True,
-                    "requirements": [], "node_count": _count_nodes(child),
+                    "requirements": [],
+                    "node_count": self._node_count(child.name, child),
                 }
         return sorted(out.values(), key=lambda p: p["name"].lower())
 
@@ -173,7 +186,7 @@ class PackageManager:
 
         load_errors = self._reload()
         return {"package": {**entry, "installed": True,
-                            "node_count": _count_nodes(target)},
+                            "node_count": self._node_count(name, target)},
                 "pip_log": pip_log, "load_errors": load_errors}
 
     # ---------------- update / remove ----------------

@@ -275,7 +275,22 @@ export default function TabBar() {
         overflowX: "auto",
       }}
     >
-      <strong style={{ marginRight: 8, whiteSpace: "nowrap" }}>NBT</strong>
+      <span
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: 6,
+          marginRight: 8,
+          whiteSpace: "nowrap",
+        }}
+      >
+        <img
+          src="/sidebar.svg"
+          alt="NBT"
+          style={{ width: 20, height: 20, borderRadius: 5, display: "block" }}
+        />
+        <strong>NBT</strong>
+      </span>
       {openTabs.map((id) => {
         const active = id === activeFlowId;
         return (
