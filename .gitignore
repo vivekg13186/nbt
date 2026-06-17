@@ -1,8 +1,13 @@
 __pycache__/
 *.pyc
+.DS_Store
+venv/
 data/
+dist/
 packages/
-nodes/confluence
-nodes/files
-nodes/nbt*
-dist
+
+# installed node packages live in subfolders under nodes/ (their source is in
+# packages/); the lockfile is machine-specific. Core nodes are top-level .py
+# files and stay tracked.
+nodes/*/
+nodes/.nbt-packages.json

@@ -8,7 +8,15 @@ import {
   Tag,
   Tooltip,
 } from "antd";
-import { Play, Plus, Save, ScrollText, SquareTerminal, Zap } from "lucide-react";
+import {
+  Copy,
+  Play,
+  Plus,
+  Save,
+  ScrollText,
+  SquareTerminal,
+  Zap,
+} from "lucide-react";
 import { useStore } from "../store";
 import { api } from "../api";
 import { activeGraphRef } from "../graph/active";
@@ -105,6 +113,21 @@ export default function Toolbar() {
       <span style={{ fontWeight: 600, minWidth: 0 }}>
         {flow ? flow.name : <span style={{ opacity: 0.5 }}>No workflow open</span>}
       </span>
+      {flow && (
+        <Tooltip title="Copy name">
+          <Button
+            type="text"
+            size="small"
+            icon={<Copy size={14} />}
+            onClick={() => {
+              navigator.clipboard
+                .writeText(flow.name)
+                .then(() => message.success("Name copied"))
+                .catch(() => message.error("Copy failed"));
+            }}
+          />
+        </Tooltip>
+      )}
       {flow && (
         <Tag color="default" style={{ marginLeft: 4 }}>
           {flow.id}

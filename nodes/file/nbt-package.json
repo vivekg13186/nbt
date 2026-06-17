@@ -1,7 +1,0 @@
-{
-  "name": "file",
-  "version": "1.0.0",
-  "description": "File system nodes for NBT: read/write/append text, read/write JSON, list a directory, test existence, delete.",
-  "author": "vivekg",
-  "requirements": []
-}
