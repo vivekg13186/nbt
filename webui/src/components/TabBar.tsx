@@ -291,12 +291,12 @@ export default function TabBar() {
                 alignItems: "center",
                 gap: 6,
                 padding: "4px 10px",
-                borderRadius: 6,
+                borderRadius: 0,
                 cursor: "pointer",
                 whiteSpace: "nowrap",
                 background: active ? "var(--nbt-active)" : "transparent",
                 color: active ? "var(--nbt-primary)" : "inherit",
-                border: "1px solid var(--nbt-border)",
+           
               }}
             >
               <Dropdown menu={tabMenu(id)} trigger={["click"]}>
