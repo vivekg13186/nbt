@@ -44,6 +44,19 @@ CREATE TABLE IF NOT EXISTS executions (
     started_at  REAL NOT NULL,
     finished_at REAL
 );
+CREATE TABLE IF NOT EXISTS schedules (
+    id           TEXT PRIMARY KEY,
+    flow_id      TEXT NOT NULL,
+    cron         TEXT NOT NULL,
+    environment  TEXT,
+    enabled      INTEGER NOT NULL DEFAULT 1,
+    created_at   REAL NOT NULL,
+    updated_at   REAL NOT NULL,
+    last_run_at  REAL,
+    last_status  TEXT,
+    last_exec_id TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_schedules_flow ON schedules(flow_id);
 CREATE TABLE IF NOT EXISTS execution_steps (
     id           INTEGER PRIMARY KEY AUTOINCREMENT,
     execution_id TEXT NOT NULL REFERENCES executions(id) ON DELETE CASCADE,
@@ -173,6 +186,7 @@ class Database:
     def delete_flow(self, flow_id):
         self._exec("DELETE FROM flows WHERE id=?", (flow_id,))
         self._exec("DELETE FROM flow_versions WHERE flow_id=?", (flow_id,))
+        self._exec("DELETE FROM schedules WHERE flow_id=?", (flow_id,))
 
     # ---------------- flow versions (snapshots) ----------------
 
@@ -204,6 +218,68 @@ class Database:
 
     def delete_version(self, version_id):
         self._exec("DELETE FROM flow_versions WHERE id=?", (version_id,))
+
+    # ---------------- schedules (cron) ----------------
+
+    def create_schedule(self, flow_id, cron, environment=None, enabled=True):
+        sid = uuid.uuid4().hex[:12]
+        now = time.time()
+        self._exec(
+            "INSERT INTO schedules (id, flow_id, cron, environment, enabled, "
+            "created_at, updated_at) VALUES (?,?,?,?,?,?,?)",
+            (sid, flow_id, cron, environment or None, 1 if enabled else 0,
+             now, now))
+        return sid
+
+    def list_schedules(self, enabled_only=False):
+        sql = ("SELECT s.*, f.name AS flow_name FROM schedules s "
+               "LEFT JOIN flows f ON f.id = s.flow_id")
+        if enabled_only:
+            sql += " WHERE s.enabled = 1"
+        sql += " ORDER BY s.created_at"
+        rows = self._query(sql)
+        for r in rows:
+            r["enabled"] = bool(r["enabled"])
+        return rows
+
+    def get_schedule(self, schedule_id):
+        rows = self._query(
+            "SELECT s.*, f.name AS flow_name FROM schedules s "
+            "LEFT JOIN flows f ON f.id = s.flow_id WHERE s.id=?",
+            (schedule_id,))
+        if not rows:
+            return None
+        rows[0]["enabled"] = bool(rows[0]["enabled"])
+        return rows[0]
+
+    def update_schedule(self, schedule_id, cron=None, environment=None,
+                        enabled=None, set_environment=False):
+        sched = self.get_schedule(schedule_id)
+        if sched is None:
+            return
+        self._exec(
+            "UPDATE schedules SET cron=?, environment=?, enabled=?, "
+            "updated_at=? WHERE id=?",
+            (cron if cron is not None else sched["cron"],
+             (environment or None) if set_environment else sched["environment"],
+             (1 if enabled else 0) if enabled is not None
+             else (1 if sched["enabled"] else 0),
+             time.time(), schedule_id))
+
+    def set_schedule_enabled(self, schedule_id, enabled):
+        self._exec(
+            "UPDATE schedules SET enabled=?, updated_at=? WHERE id=?",
+            (1 if enabled else 0, time.time(), schedule_id))
+
+    def set_schedule_result(self, schedule_id, last_run_at, last_status,
+                            last_exec_id):
+        self._exec(
+            "UPDATE schedules SET last_run_at=?, last_status=?, "
+            "last_exec_id=? WHERE id=?",
+            (last_run_at, last_status, last_exec_id, schedule_id))
+
+    def delete_schedule(self, schedule_id):
+        self._exec("DELETE FROM schedules WHERE id=?", (schedule_id,))
 
     # ---------------- environments (CRUD) ----------------
 

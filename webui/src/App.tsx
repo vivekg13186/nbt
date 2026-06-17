@@ -14,6 +14,7 @@ import GraphEditor from "./components/GraphEditor";
 // the initial bundle until the relevant view/panel is opened.
 const EnvEditor = lazy(() => import("./components/EnvEditor"));
 const ListenersPage = lazy(() => import("./components/ListenersPage"));
+const SchedulesPage = lazy(() => import("./components/SchedulesPage"));
 const RunsPage = lazy(() => import("./components/RunsPage"));
 const PackagesPage = lazy(() => import("./components/PackagesPage"));
 const Terminal = lazy(() => import("./components/Terminal"));
@@ -142,6 +143,7 @@ export default function App() {
           <Suspense fallback={<div className="nbt-empty">Loading…</div>}>
             {view === "environment" && <EnvEditor />}
             {view === "listeners" && <ListenersPage />}
+            {view === "schedules" && <SchedulesPage />}
             {view === "runs" && <RunsPage />}
             {view === "packages" && <PackagesPage />}
             {terminalOpen && <Terminal />}

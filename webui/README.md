@@ -57,8 +57,8 @@ npm run build                        # outputs to webui/dist/
   **shortcuts** help button), **environment** selector, **Save**, **Listen**,
   **Run**, and toggles for the **Log** and **Shell** tabs.
 - **Left icon rail** — switch between **Workflows**, **Nodes**, **Packages**,
-  **Environments**, **Listeners**, and **Executions**. The rail also
-  shows/hides the sidebar.
+  **Environments**, **Listeners**, **Schedules**, and **Executions**. The rail
+  also shows/hides the sidebar.
 - **Sidebar** — searchable list of workflows, the node palette, or environments.
 - **Main panel**
   - *Workflows*: the LiteGraph canvas (HiDPI-aware). Right-click the canvas, use
@@ -73,6 +73,10 @@ npm run build                        # outputs to webui/dist/
     `.nbtpack`/`.zip` bundle (with load-error reporting).
   - *Environments*: a JSON code editor (CodeMirror) with live validation.
   - *Listeners*: live table of armed trigger flows with per-listener Stop.
+  - *Schedules*: cron-scheduled flow runs — create with a flow picker, cron
+    expression (presets provided) and optional environment; enable/disable,
+    Run now, edit, delete. Shows each schedule's last result and next fire
+    time. Schedules persist server-side and fire on the minute in server time.
   - *Executions*: run history; click a row for step-by-step inputs/outputs
     (Display Code / Show Image nodes render their content here). A **Run** in
     progress can be cancelled — the toolbar Run button becomes **Stop**, and

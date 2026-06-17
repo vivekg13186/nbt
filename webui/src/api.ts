@@ -13,6 +13,7 @@ import type {
   NodePackage,
   PackagesResult,
   RunResult,
+  Schedule,
 } from "./types";
 
 const BASE = "/api";
@@ -172,6 +173,36 @@ export const api = {
     req<PackagesResult>(`/packages/${encodeURIComponent(name)}`, {
       method: "DELETE",
     }),
+
+  // schedules (cron)
+  listSchedules: () => req<Schedule[]>("/schedules"),
+  createSchedule: (body: {
+    flow_id: string;
+    cron: string;
+    environment?: string | null;
+    enabled?: boolean;
+  }) =>
+    req<Schedule>("/schedules", {
+      method: "POST",
+      body: JSON.stringify(body),
+    }),
+  updateSchedule: (
+    id: string,
+    body: {
+      cron?: string;
+      environment?: string | null;
+      set_environment?: boolean;
+      enabled?: boolean;
+    },
+  ) =>
+    req<Schedule>(`/schedules/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify(body),
+    }),
+  deleteSchedule: (id: string) =>
+    req<{ ok: boolean }>(`/schedules/${id}`, { method: "DELETE" }),
+  runSchedule: (id: string) =>
+    req<RunResult>(`/schedules/${id}/run`, { method: "POST" }),
 
   // listeners
   listeners: () => req<ListenerStat[]>("/listeners"),

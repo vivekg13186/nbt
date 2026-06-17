@@ -392,6 +392,69 @@ def main():
     check("execution row recorded cancelled",
           db.get_execution(eid)["status"] == "cancelled")
 
+    # ---- cron parser / matcher ----
+    from datetime import datetime as _dt
+    from nbt.core.scheduler import (cron_matches, cron_next, parse_cron,
+                                    CronError, FlowScheduler)
+    wed9 = _dt(2026, 6, 17, 9, 0)  # Wednesday 09:00
+    check("cron daily 9am matches", cron_matches("0 9 * * *", wed9))
+    check("cron minute mismatch", not cron_matches("0 9 * * *",
+                                                   wed9.replace(minute=1)))
+    check("cron step */5", cron_matches("*/5 * * * *", wed9)
+          and not cron_matches("*/5 * * * *", wed9.replace(minute=3)))
+    check("cron range dow 1-5 (Wed)", cron_matches("0 9 * * 1-5", wed9))
+    check("cron list", cron_matches("0,30 9 * * *", wed9.replace(minute=30)))
+    check("cron @daily macro", cron_matches("@daily", _dt(2026, 6, 17, 0, 0)))
+    check("cron dow 7 == Sunday", cron_matches("0 0 * * 7",
+                                              _dt(2026, 6, 21, 0, 0)))
+    # dom + dow both restricted -> OR semantics
+    check("cron dom-or-dow", cron_matches("0 0 1 * 0", _dt(2026, 6, 1, 0, 0))
+          and cron_matches("0 0 1 * 0", _dt(2026, 6, 7, 0, 0))  # a Sunday
+          and not cron_matches("0 0 1 * 0", _dt(2026, 6, 3, 0, 0)))
+    nxt = cron_next("*/15 * * * *", _dt(2026, 6, 17, 9, 2))
+    check("cron_next finds next slot", nxt == _dt(2026, 6, 17, 9, 15), str(nxt))
+    for bad in ["* * *", "60 * * * *", "* * * * 8", "*/0 * * * *",
+                "5-1 * * * *"]:
+        try:
+            parse_cron(bad)
+            check(f"cron rejects {bad!r}", False, "no error")
+        except CronError:
+            check(f"cron rejects {bad!r}", True)
+
+    # ---- schedules: DB + scheduler run ----
+    _time.sleep(0.2)  # let any in-flight listener emit above finish first
+    db.clear_executions()
+    sfid = db.create_flow("sched-flow", {
+        "nodes": [node("n1", "set_value", "v", {"value": "x"})], "links": []})
+    sid = db.create_schedule(sfid, "0 9 * * *", environment=None, enabled=True)
+    check("schedule created/listed", len(db.list_schedules()) == 1
+          and db.list_schedules()[0]["flow_name"] == "sched-flow")
+    check("enabled_only filter", len(db.list_schedules(enabled_only=True)) == 1)
+    sched = FlowScheduler(engine, db)
+    ex_id, st, _e = sched.run_now(sid)
+    check("scheduler run_now executes flow", st == "passed", str(_e))
+    check("schedule result persisted",
+          db.get_schedule(sid)["last_status"] == "passed"
+          and db.get_schedule(sid)["last_run_at"] is not None)
+    # _tick fires matching schedules (capture instead of spawning threads)
+    fired = []
+    sched._fire = lambda s: fired.append(s["id"])  # type: ignore
+    sched._tick(_dt(2026, 6, 17, 9, 0))
+    check("tick fires matching schedule", fired == [sid], str(fired))
+    fired.clear()
+    sched._tick(_dt(2026, 6, 17, 9, 1))  # minute 1 doesn't match "0 9 * * *"
+    check("tick skips non-matching minute", fired == [], str(fired))
+    db.set_schedule_enabled(sid, False)
+    check("disabled schedule excluded",
+          len(db.list_schedules(enabled_only=True)) == 0)
+    db.delete_schedule(sid)
+    check("schedule deleted", len(db.list_schedules()) == 0)
+    # deleting a flow removes its schedules
+    sid2 = db.create_schedule(sfid, "@hourly")
+    db.delete_flow(sfid)
+    check("flow delete cascades to schedules",
+          len(db.list_schedules()) == 0, str(db.list_schedules()))
+
     # ---- executions are persisted ----
     check("executions listed", len(db.list_executions()) >= 1)
     db.clear_executions()

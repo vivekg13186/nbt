@@ -2,6 +2,7 @@ import { Tooltip } from "antd";
 import {
   ChevronLeft,
   ChevronRight,
+  Clock,
   History,
   LayoutGrid,
   Package,
@@ -18,6 +19,7 @@ const ITEMS: { view: View; icon: React.ReactNode; label: string }[] = [
   { view: "packages", icon: <Package size={20} />, label: "Packages" },
   { view: "environment", icon: <Settings size={20} />, label: "Environments" },
   { view: "listeners", icon: <Zap size={20} />, label: "Listeners" },
+  { view: "schedules", icon: <Clock size={20} />, label: "Schedules" },
   { view: "runs", icon: <History size={20} />, label: "Executions" },
 ];
 

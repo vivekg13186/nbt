@@ -36,6 +36,7 @@ from pydantic import BaseModel
 from ..core.listener import FlowListener
 from ..core.engine import Engine
 from ..core.packages import PackageManager, PackageError
+from ..core.scheduler import FlowScheduler, CronError, cron_next, parse_cron
 
 
 # --------------------------------------------------------------------------
@@ -239,6 +240,20 @@ class VersionCreate(BaseModel):
     graph: Optional[dict] = None  # snapshot this graph; else the flow's saved one
 
 
+class ScheduleCreate(BaseModel):
+    flow_id: str
+    cron: str
+    environment: Optional[str] = None
+    enabled: bool = True
+
+
+class SchedulePatch(BaseModel):
+    cron: Optional[str] = None
+    environment: Optional[str] = None
+    set_environment: bool = False  # allow clearing the environment to null
+    enabled: Optional[bool] = None
+
+
 # --------------------------------------------------------------------------
 # App factory
 # --------------------------------------------------------------------------
@@ -254,6 +269,15 @@ def create_app(db, registry) -> FastAPI:
     running: dict[str, dict] = {}
     running_lock = threading.Lock()
 
+    def _register_run(exec_id, cancel, flow_id):
+        with running_lock:
+            running[exec_id] = {"cancel": cancel, "flow_id": flow_id}
+
+    def _unregister_token(cancel):
+        with running_lock:
+            for k in [k for k, v in running.items() if v["cancel"] is cancel]:
+                running.pop(k, None)
+
     # Served media folder (temp): display nodes copy images here and reference
     # them by URL (/api/media/<file>) instead of inlining base64.
     media_dir = Path(tempfile.mkdtemp(prefix="nbt-media-"))
@@ -266,6 +290,14 @@ def create_app(db, registry) -> FastAPI:
 
     listeners._media_register = media_register
 
+    # Cron scheduler: runs persisted schedules on their cadence. Scheduled
+    # runs register in the same `running` map so they're cancellable too.
+    scheduler = FlowScheduler(
+        engine, db,
+        log=lambda m: logbus.emit("    " + m, level="info"),
+        media=media_register,
+        register=_register_run, unregister=_unregister_token)
+
     app = FastAPI(title="NBT API", version="1.0")
     app.add_middleware(
         CORSMiddleware, allow_origins=["*"], allow_methods=["*"],
@@ -277,6 +309,11 @@ def create_app(db, registry) -> FastAPI:
     @app.on_event("startup")
     async def _bind():
         logbus.bind_loop(asyncio.get_running_loop())
+        scheduler.start()
+
+    @app.on_event("shutdown")
+    async def _unbind():
+        scheduler.stop()
 
     def _env_lookup(name):
         """Return (env_name, env_vars) or (None, None); 404 if name unknown."""
@@ -396,8 +433,7 @@ def create_app(db, registry) -> FastAPI:
         cancel = threading.Event()
 
         def on_start(eid):
-            with running_lock:
-                running[eid] = {"cancel": cancel, "flow_id": flow_id}
+            _register_run(eid, cancel, flow_id)
 
         try:
             exec_id, status, error = await run_in_threadpool(
@@ -406,10 +442,7 @@ def create_app(db, registry) -> FastAPI:
                     env_name, env_vars, log=node_log, media=media_register,
                     cancel=cancel, on_start=on_start))
         finally:
-            with running_lock:
-                for k in [k for k, v in running.items()
-                          if v["cancel"] is cancel]:
-                    running.pop(k, None)
+            _unregister_token(cancel)
         for st in db.get_steps(exec_id):
             line = f"  [{st['status']:>7}] {st['node_name']} ({st['node_type']})"
             logbus.emit(line,
@@ -580,6 +613,74 @@ def create_app(db, registry) -> FastAPI:
     def stop_all_listen():
         n = listeners.stop_all()
         return {"ok": True, "stopped": n}
+
+    # ---------------- schedules (cron) ----------------
+    def _schedule_out(sched: dict) -> dict:
+        out = dict(sched)
+        nxt = None
+        if sched.get("enabled"):
+            try:
+                dt = cron_next(sched["cron"])
+                nxt = dt.timestamp() if dt else None
+            except CronError:
+                nxt = None
+        out["next_run_at"] = nxt
+        return out
+
+    @app.get("/api/schedules")
+    def list_schedules():
+        return [_schedule_out(s) for s in db.list_schedules()]
+
+    @app.post("/api/schedules")
+    def create_schedule(body: ScheduleCreate):
+        if db.get_flow(body.flow_id) is None:
+            raise HTTPException(404, "flow not found")
+        try:
+            parse_cron(body.cron)
+        except CronError as e:
+            raise HTTPException(400, f"invalid cron: {e}")
+        if body.environment:
+            _env_lookup(body.environment)  # 404 if unknown
+        sid = db.create_schedule(
+            body.flow_id, body.cron.strip(), body.environment, body.enabled)
+        logbus.emit(f"[cron] scheduled '{db.get_flow(body.flow_id)['name']}' "
+                    f"({body.cron})", level="ok")
+        return _schedule_out(db.get_schedule(sid))
+
+    @app.patch("/api/schedules/{schedule_id}")
+    def patch_schedule(schedule_id: str, body: SchedulePatch):
+        if db.get_schedule(schedule_id) is None:
+            raise HTTPException(404, "schedule not found")
+        if body.cron is not None:
+            try:
+                parse_cron(body.cron)
+            except CronError as e:
+                raise HTTPException(400, f"invalid cron: {e}")
+        if body.set_environment and body.environment:
+            _env_lookup(body.environment)
+        db.update_schedule(
+            schedule_id,
+            cron=body.cron.strip() if body.cron is not None else None,
+            environment=body.environment,
+            enabled=body.enabled,
+            set_environment=body.set_environment)
+        return _schedule_out(db.get_schedule(schedule_id))
+
+    @app.delete("/api/schedules/{schedule_id}")
+    def delete_schedule(schedule_id: str):
+        if db.get_schedule(schedule_id) is None:
+            raise HTTPException(404, "schedule not found")
+        db.delete_schedule(schedule_id)
+        return {"ok": True}
+
+    @app.post("/api/schedules/{schedule_id}/run")
+    async def run_schedule_now(schedule_id: str):
+        sched = db.get_schedule(schedule_id)
+        if sched is None:
+            raise HTTPException(404, "schedule not found")
+        exec_id, status, error = await run_in_threadpool(
+            scheduler.run_now, schedule_id)
+        return {"execution_id": exec_id, "status": status, "error": error}
 
     # ---------------- node packages ----------------
     def _pkg_list():

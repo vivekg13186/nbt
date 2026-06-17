@@ -100,6 +100,21 @@ export interface FlowVersionDetail extends FlowVersion {
   graph: Graph;
 }
 
+export interface Schedule {
+  id: string;
+  flow_id: string;
+  flow_name: string | null;
+  cron: string;
+  environment: string | null;
+  enabled: boolean;
+  created_at: number;
+  updated_at: number;
+  last_run_at: number | null;
+  last_status: string | null;
+  last_exec_id: string | null;
+  next_run_at: number | null;
+}
+
 export interface Environment {
   id: string;
   name: string;

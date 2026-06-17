@@ -7,6 +7,7 @@ export type View =
   | "nodes"
   | "environment"
   | "listeners"
+  | "schedules"
   | "runs"
   | "packages";
 
