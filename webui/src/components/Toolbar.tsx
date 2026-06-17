@@ -20,6 +20,7 @@ import {
   Redo2,
   Save,
   ScrollText,
+  Square,
   SquareTerminal,
   Undo2,
   Zap,
@@ -89,11 +90,22 @@ export default function Toolbar() {
       await save();
       const r = await api.runFlow(activeFlowId, activeEnvName);
       if (r.status === "passed") message.success("Run passed");
+      else if (r.status === "cancelled") message.warning("Run cancelled");
       else message.error(`Run ${r.status}${r.error ? ": " + r.error : ""}`);
     } catch (e) {
       message.error((e as Error).message);
     } finally {
       setBusy(false);
+    }
+  }
+
+  async function onStop() {
+    if (!activeFlowId) return;
+    try {
+      const r = await api.cancelFlowRuns(activeFlowId);
+      message.info(r.cancelled ? "Stopping run…" : "No run in progress");
+    } catch (e) {
+      message.error((e as Error).message);
     }
   }
 
@@ -128,7 +140,7 @@ export default function Toolbar() {
         label: cat,
         children: list.map((n) => ({
           key: n.type,
-          label: n.label + (n.is_trigger ? " ⚡" : ""),
+          label: n.label + (n.is_trigger ? " ⚡" : n.is_split ? " ⑂" : ""),
         })),
       })),
     ],
@@ -272,12 +284,21 @@ export default function Toolbar() {
         >
           Listen
         </Button>
+      ) : busy ? (
+        <Button
+          danger
+          type="primary"
+          size="small"
+          icon={<Square size={14} />}
+          onClick={onStop}
+        >
+          Stop
+        </Button>
       ) : (
         <Button
           type="primary"
           size="small"
           icon={<Play size={15} />}
-          loading={busy}
           onClick={onRun}
           disabled={!flow}
         >

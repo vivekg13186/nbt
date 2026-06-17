@@ -289,6 +289,109 @@ def main():
           and all(e["status"] == "passed" for e in execs),
           str([(e["status"], e["error"]) for e in execs]))
 
+    # ---- fan-out (Split) in a normal Run ----
+    db.clear_executions()
+    check("split node discovered",
+          getattr(registry.get("split"), "is_split", False))
+    sp = node("s1", "split", "each", {"items": "[10, 20, 30]"})
+    sp["out_aliases"] = {"item": "row"}
+    g_split = {
+        "nodes": [
+            sp,
+            node("n2", "python_eval", "use", {"expression": "row * 2"},
+                 post="last['value'] == row * 2"),
+        ],
+        "links": [["s1", "n2"]],
+    }
+    eid, status, err = engine.execute(fid, "t1b", g_split)
+    check("fan-out run passes", status == "passed", str(err))
+    steps = db.get_steps(eid)
+    # 1 split step + one "use" step per item (3)
+    use_steps = [s for s in steps if s["node_type"] == "python_eval"]
+    check("downstream ran once per item", len(use_steps) == 3,
+          str([s["node_name"] for s in steps]))
+    check("per-item steps are labelled by index",
+          any("#0" in (s["node_name"] or "") for s in use_steps)
+          and any("#2" in (s["node_name"] or "") for s in use_steps),
+          str([s["node_name"] for s in use_steps]))
+
+    # a template that yields a list also fans out (env var)
+    db.clear_executions()
+    sp2 = node("s1", "split", "each", {"items": "{{ rows }}"})
+    g_split2 = {"nodes": [sp2, node("n2", "set_value", "v", {"value": "x"})],
+                "links": [["s1", "n2"]]}
+    eid, status, err = engine.execute(
+        fid, "t1b", g_split2, env_vars={"rows": [1, 2]})
+    setv = [s for s in db.get_steps(eid) if s["node_type"] == "set_value"]
+    check("fan-out over templated list", status == "passed" and len(setv) == 2,
+          f"status={status} steps={len(setv)} err={err}")
+
+    # one failing item fails the Run but the others still run (continue mode)
+    db.clear_executions()
+    sp3 = node("s1", "split", "each", {"items": "[1, 2, 3]"})
+    g_split3 = {
+        "nodes": [
+            sp3,
+            node("n2", "python_eval", "chk", {"expression": "item"},
+                 post="item != 2"),
+        ],
+        "links": [["s1", "n2"]],
+    }
+    eid, status, err = engine.execute(fid, "t1b", g_split3)
+    chk = [s for s in db.get_steps(eid) if s["node_type"] == "python_eval"]
+    check("fan-out fails run if any item fails", status == "failed", str(err))
+    check("other items still run after a failure", len(chk) == 3,
+          f"{len(chk)} item steps")
+
+    # empty list -> split runs, no downstream iterations, passes
+    db.clear_executions()
+    sp4 = node("s1", "split", "each", {"items": "[]"})
+    g_split4 = {"nodes": [sp4, node("n2", "set_value", "v", {"value": "x"})],
+                "links": [["s1", "n2"]]}
+    eid, status, err = engine.execute(fid, "t1b", g_split4)
+    setv = [s for s in db.get_steps(eid) if s["node_type"] == "set_value"]
+    check("empty split passes with no downstream runs",
+          status == "passed" and len(setv) == 0, f"{status} {len(setv)}")
+
+    # ---- cooperative cancellation ----
+    import threading as _threading
+    db.clear_executions()
+    g_cancel = {
+        "nodes": [
+            node("n1", "set_value", "a", {"value": "x"}),
+            node("n2", "delay", "wait", {"seconds": 0.3}),
+            node("n3", "set_value", "b", {"value": "y"}),
+        ],
+        "links": [["n1", "n2"], ["n2", "n3"]],
+    }
+    cancel = _threading.Event()
+
+    def _cancel_on_start(_eid):
+        cancel.set()  # cancel immediately, before the first node runs
+
+    eid, status, err = engine.execute(
+        fid, "t1b", g_cancel, cancel=cancel, on_start=_cancel_on_start)
+    check("cancel before first node -> cancelled", status == "cancelled",
+          str(err))
+    check("cancelled run records no steps",
+          len(db.get_steps(eid)) == 0, str(db.get_steps(eid)))
+
+    # cancel partway: a token set during the run stops subsequent nodes
+    db.clear_executions()
+    cancel2 = _threading.Event()
+    started = {}
+
+    def _arm(eid):
+        started["id"] = eid
+        # set the token after the run begins; checked before the next node
+        cancel2.set()
+
+    eid, status, err = engine.execute(
+        fid, "t1b", g_cancel, cancel=cancel2, on_start=_arm)
+    check("mid-run cancel marked cancelled", status == "cancelled", str(err))
+    check("execution row recorded cancelled",
+          db.get_execution(eid)["status"] == "cancelled")
+
     # ---- executions are persisted ----
     check("executions listed", len(db.list_executions()) >= 1)
     db.clear_executions()

@@ -83,6 +83,14 @@ export const api = {
       method: "POST",
       body: JSON.stringify({ environment }),
     }),
+  // cancel any in-flight Run(s) of a flow (the toolbar Stop button)
+  cancelFlowRuns: (id: string) =>
+    req<{ ok: boolean; cancelled: number }>(`/flows/${id}/cancel`, {
+      method: "POST",
+    }),
+  // cancel one running execution by id (Executions page)
+  cancelExecution: (execId: string) =>
+    req<{ ok: boolean }>(`/executions/${execId}/cancel`, { method: "POST" }),
 
   // versions (snapshots)
   snapshotVersion: (flowId: string, label?: string | null, graph?: Graph) =>

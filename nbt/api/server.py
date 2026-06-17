@@ -190,6 +190,7 @@ def node_metas(registry) -> list[dict]:
             "category": cls.category or "General", "params": params,
             "outputs": list(cls.outputs),
             "is_trigger": bool(getattr(cls, "is_trigger", False)),
+            "is_split": bool(getattr(cls, "is_split", False)),
         })
     return metas
 
@@ -246,6 +247,12 @@ def create_app(db, registry) -> FastAPI:
     logbus = LogBus()
     listeners = ListenerManager(engine, logbus)
     packages = PackageManager(registry.nodes_dir, registry)
+
+    # In-flight Run executions, so a Stop button can cancel them. Maps an
+    # execution id to its cancel token (a threading.Event) and originating
+    # flow. A token is shared with any subflows the run spawns.
+    running: dict[str, dict] = {}
+    running_lock = threading.Lock()
 
     # Served media folder (temp): display nodes copy images here and reference
     # them by URL (/api/media/<file>) instead of inlining base64.
@@ -386,10 +393,23 @@ def create_app(db, registry) -> FastAPI:
         logbus.emit(f"[run] '{flow_name}'"
                     + (f" (env {env_name})" if env_name else ""))
         node_log = lambda m: logbus.emit("    " + m, level="info")
-        exec_id, status, error = await run_in_threadpool(
-            functools.partial(
-                engine.execute, flow_id, flow_name, graph,
-                env_name, env_vars, log=node_log, media=media_register))
+        cancel = threading.Event()
+
+        def on_start(eid):
+            with running_lock:
+                running[eid] = {"cancel": cancel, "flow_id": flow_id}
+
+        try:
+            exec_id, status, error = await run_in_threadpool(
+                functools.partial(
+                    engine.execute, flow_id, flow_name, graph,
+                    env_name, env_vars, log=node_log, media=media_register,
+                    cancel=cancel, on_start=on_start))
+        finally:
+            with running_lock:
+                for k in [k for k, v in running.items()
+                          if v["cancel"] is cancel]:
+                    running.pop(k, None)
         for st in db.get_steps(exec_id):
             line = f"  [{st['status']:>7}] {st['node_name']} ({st['node_type']})"
             logbus.emit(line,
@@ -410,6 +430,29 @@ def create_app(db, registry) -> FastAPI:
         env_name, env_vars = _env_lookup(body.environment)
         return await _run_graph(flow["id"], flow["name"], flow["graph"],
                                 env_name, env_vars)
+
+    @app.post("/api/executions/{exec_id}/cancel")
+    def cancel_execution(exec_id: str):
+        with running_lock:
+            entry = running.get(exec_id)
+        if entry is None:
+            raise HTTPException(404, "no running execution with that id")
+        entry["cancel"].set()
+        logbus.emit(f"[run] cancel requested ({exec_id})")
+        return {"ok": True}
+
+    @app.post("/api/flows/{flow_id}/cancel")
+    def cancel_flow_runs(flow_id: str):
+        """Cancel any in-flight Run(s) of this flow (used by the Stop button)."""
+        with running_lock:
+            tokens = [v["cancel"] for v in running.values()
+                      if v["flow_id"] == flow_id]
+        for tok in tokens:
+            tok.set()
+        if tokens:
+            logbus.emit(f"[run] cancel requested for flow {flow_id} "
+                        f"({len(tokens)})")
+        return {"ok": True, "cancelled": len(tokens)}
 
     # ---------------- flow versions (snapshots) ----------------
     @app.post("/api/flows/{flow_id}/versions")

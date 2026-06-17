@@ -8,7 +8,7 @@ import {
   Table,
   Tag,
 } from "antd";
-import { RefreshCw, Trash2 } from "lucide-react";
+import { RefreshCw, Square, Trash2 } from "lucide-react";
 import CodeMirror from "@uiw/react-codemirror";
 import { json } from "@codemirror/lang-json";
 import { html } from "@codemirror/lang-html";
@@ -41,6 +41,7 @@ const statusColor: Record<string, string> = {
   failed: "error",
   error: "error",
   running: "processing",
+  cancelled: "warning",
   skipped: "default",
 };
 
@@ -136,6 +137,16 @@ export default function RunsPage() {
     setDetail(await api.getExecution(id));
   }
 
+  async function cancelRun(id: string) {
+    try {
+      await api.cancelExecution(id);
+      message.info("Stopping run…");
+      setTimeout(load, 600); // give the engine a moment to settle the status
+    } catch (e) {
+      message.error((e as Error).message);
+    }
+  }
+
   const columns = [
     {
       title: "Status",
@@ -161,6 +172,24 @@ export default function RunsPage() {
         r.finished_at
           ? `${(r.finished_at - r.started_at).toFixed(2)}s`
           : "…",
+    },
+    {
+      title: "",
+      key: "actions",
+      render: (_: unknown, r: Execution) =>
+        r.status === "running" ? (
+          <Button
+            size="small"
+            danger
+            icon={<Square size={12} />}
+            onClick={(e) => {
+              e.stopPropagation();
+              cancelRun(r.id);
+            }}
+          >
+            Stop
+          </Button>
+        ) : null,
     },
   ];
 

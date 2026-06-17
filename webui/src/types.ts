@@ -11,6 +11,7 @@ export interface NodeMeta {
   params: NodeParam[];
   outputs: string[];
   is_trigger: boolean;
+  is_split?: boolean;
 }
 
 export interface LoadError {

@@ -271,6 +271,27 @@ class Every5Min(TriggerNode):
 
 Notes: `ctx` in `start()` contains the active environment's variables (and `{{ }}` templates in inputs are resolved against them). The node's *pre* field filters events — falsy means the event is silently dropped. Trigger nodes have no `post` field and no input pin. Events that arrive while a previous triggered run is still executing are dropped, so a slow flow never piles up. See `nodes/interval_trigger.py` and `nodes/file_watch_trigger.py`.
 
+## Fan-out (split) nodes
+
+Subclass `SplitNode` to fan out over a finite list **inside a normal Run** (no Listen). Implement `items(self, inputs, ctx)` to return the list; the engine runs the subgraph reachable from your node once per element, seeding `item` and `index` into the context (and your node's output aliases per item). One execution is recorded, with the per-item steps labelled `node #0`, `node #1`, … Iterations are independent — by default one failing item doesn't stop the others and the Run fails if any item failed; expose a `stop_on_error` input (the base class reads it) to abort on first failure. Splits may nest.
+
+```python
+# nodes/my_split.py
+from nbt.core.node_base import SplitNode
+
+class SplitRange(SplitNode):
+    type_name = "split_range"
+    label = "Split Range"
+    category = "Flow"
+    inputs = {"n": 3, "stop_on_error": False}
+    outputs = ["item", "index"]   # per-item outputs (alias them downstream)
+
+    def items(self, inputs, ctx):
+        return list(range(int(inputs["n"])))   # the list to fan out over
+```
+
+Downstream nodes read the current element as `item` / `index` (or via the split's output aliases, or `last['item']`). Keep the split's subgraph dedicated: inner nodes run in isolated per-item contexts, so don't join them back into the outer graph. Worked examples: `nodes/split.py` (**Split** over a JSON array / template, and **Split CSV** over CSV rows).
+
 ## Bundled nodes to learn from
 
 | File | Shows |
@@ -284,3 +305,4 @@ Notes: `ctx` in `start()` contains the active environment's variables (and `{{ }
 | `nodes/subflow.py` | calling another flow via `ctx["run_flow"]` |
 | `nodes/file_lines_trigger.py` | a finite streaming trigger with `finish()` |
 | `nodes/emit_array.py` | emitting each element of an array |
+| `nodes/split.py` | fan-out `SplitNode` (Run-time per-item, JSON list + CSV) |

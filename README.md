@@ -87,6 +87,14 @@ Right-click a tab → **Snapshot version** to save a read-only copy of the workf
 
 A flow is a directed acyclic graph: nodes may have multiple inputs and outputs, branches and joins are allowed, and a graph may contain several disconnected subgraphs — the only structural rule is no cycles. Nodes execute in topological order; a node's `last` is its first connected parent's outputs. A node fails if `run()` raises, if the class `check()` hook raises, or if its post expression is falsy. Any failure fails the whole flow immediately; otherwise it passes. Every run and every step is recorded in SQLite.
 
+While a Run is in progress the toolbar's Run button becomes a **Stop** button (and each running row in the Executions view has its own Stop); cancelling marks the execution `cancelled`. Cancellation is cooperative — it is checked between nodes (and between fan-out items), so an already-running node call, e.g. a long HTTP request or Delay, finishes before the run stops. Cancelling also propagates into subflows.
+
+## Fan-out (Split)
+
+A **Split** node runs the subgraph downstream of it **once per item** during a normal Run — the Run-time equivalent of the Emit Array trigger, without Listen. Give **Split (Fan-out)** ⑂ a JSON array (or a `{{ template }}` that yields a list, e.g. an environment variable or an upstream output); use **Split CSV** ⑂ to fan out over the rows of a CSV file (each `item` is a dict keyed by the header row). For every element the engine seeds `item` and `index` into the context — and sets the split's output aliases per item — then runs every node reachable from the split. Each iteration records its own steps (labelled `node #0`, `node #1`, …) under the single execution.
+
+Iterations are independent: by default one failing item does not stop the others (so you see every per-item result), and the Run fails if any item failed. Set the split's `stop_on_error` input to abort on the first failure instead. Splits may nest (a split inside a split's subgraph fans out per outer item). Keep a split's subgraph dedicated — joining a split's inner nodes back into the outer graph is not supported, since inner nodes run in isolated per-item contexts.
+
 ## Trigger (listener) flows
 
 A flow can contain a **trigger node** (marked ⚡) — *Interval Trigger* (emit every N seconds), *File Watch Trigger* (emit when a file changes), *File Lines* (emit each line of a file), or *Emit Array* (emit each element of an array). A trigger need not be connected to anything; it can stand alone or be the root of a subgraph (exactly one trigger per flow). Trigger flows aren't Run; press **Listen** to arm the trigger. Every emitted event executes the subgraph reachable from the trigger (in topological order, same as Run) with the trigger's outputs seeded into the context, and each event becomes its own recorded execution. The trigger's *pre* field is an event filter — falsy events are ignored without creating an execution.
@@ -124,7 +132,9 @@ class MyNode(BaseNode):
 
 Input widget types come from the defaults (bool → toggle, int/float → number, else text). Files and folders starting with `_` or `.` are ignored (so `nodes/pg/_helpers.py` can hold shared code). A broken node file never crashes the app — it's reported (with its sub-path) under *Load errors* in the palette. For listener-style nodes subclass `TriggerNode` — see `docs/CUSTOM_NODES.md` for the full guide.
 
-Bundled nodes: Set Value, Python Eval, HTTP Request, Delay, Assert Equals, Log, Subflow (run another saved flow as a step); **Display** — Display Code (shows JSON/JS/text), Show Image (file path, URL or data URI); triggers — Interval Trigger ⚡, File Watch Trigger ⚡, File Lines ⚡ (streams a file line by line, running the flow per line), Emit Array ⚡ (emits each element of an array, running the flow per element).
+Bundled nodes: Set Value, Python Eval, HTTP Request, Delay, Assert Equals, Log, Subflow (run another saved flow as a step); **Flow** — Split (Fan-out) ⑂ and Split CSV ⑂ (run the downstream subgraph once per list element / CSV row, in a normal Run); **Display** — Display Code (shows JSON/JS/text), Show Image (file path, URL or data URI); triggers — Interval Trigger ⚡, File Watch Trigger ⚡, File Lines ⚡ (streams a file line by line, running the flow per line), Emit Array ⚡ (emits each element of an array, running the flow per element).
+
+Custom fan-out nodes subclass `SplitNode` and implement `items(self, inputs, ctx)` (return the list to iterate); custom listener nodes subclass `TriggerNode`. See `docs/CUSTOM_NODES.md`.
 
 ### Subflows
 

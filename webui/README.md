@@ -74,7 +74,11 @@ npm run build                        # outputs to webui/dist/
   - *Environments*: a JSON code editor (CodeMirror) with live validation.
   - *Listeners*: live table of armed trigger flows with per-listener Stop.
   - *Executions*: run history; click a row for step-by-step inputs/outputs
-    (Display Code / Show Image nodes render their content here).
+    (Display Code / Show Image nodes render their content here). A **Run** in
+    progress can be cancelled — the toolbar Run button becomes **Stop**, and
+    running rows here have their own Stop; cancelled runs show as `cancelled`.
+    A **Split** ⑂ node fans out: the downstream subgraph runs once per list /
+    CSV item, with per-item steps labelled `node #0`, `node #1`, …
 - **Bottom panel** — two tabs: an interactive **Shell** (xterm.js over a PTY
   WebSocket) and a **Log** stream of run/listener/package output.
 - **Drag-and-drop** anywhere on the window: a `.json` imports as a new workflow;

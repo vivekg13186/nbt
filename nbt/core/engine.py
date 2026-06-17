@@ -54,6 +54,18 @@ class FlowValidationError(Exception):
     """The flow graph is structurally invalid."""
 
 
+class _NodeFailed(Exception):
+    """Internal: a node failed; carries the recorded error message."""
+
+    def __init__(self, error):
+        super().__init__(error)
+        self.error = error
+
+
+class ExecutionCancelled(Exception):
+    """Internal: a cancel token fired; the run is being aborted."""
+
+
 def _eval_env(ctx):
     env = {"ctx": ctx, "last": ctx.get("last")}
     for k, v in ctx.items():
@@ -191,7 +203,7 @@ class Engine:
     def execute(self, flow_id, flow_name, graph, environment=None,
                 env_vars=None, trigger_node=None, trigger_outputs=None,
                 log=None, media=None, seed_vars=None, out_collector=None,
-                call_stack=None):
+                call_stack=None, cancel=None, on_start=None):
         """Run a flow graph as a DAG. Returns (execution_id, status, error).
 
         `env_vars` (dict) are injected into the context before any node:
@@ -210,9 +222,24 @@ class Engine:
         Subflow runtime: `seed_vars` (dict) are seeded as named variables;
         `out_collector` (dict) is filled with the published output aliases;
         `call_stack` carries the chain of flow names for recursion detection.
+
+        Fan-out: a node whose class sets ``is_split = True`` returns
+        ``{"items": [...]}``; the engine then runs that node's descendant
+        subgraph once per item (with ``item`` / ``index`` seeded), recording
+        a set of steps per item. Splits may nest.
+
+        Cancellation: pass `cancel` (a ``threading.Event``). It is checked
+        between nodes and between fan-out items; when set the run finishes with
+        status ``"cancelled"``. `on_start(exec_id)` is invoked right after the
+        execution row is created (so a caller can register the cancel token).
         """
         log_fn = log if callable(log) else (lambda *_a, **_k: None)
         exec_id = self.db.create_execution(flow_id, flow_name, environment)
+        if callable(on_start):
+            try:
+                on_start(exec_id)
+            except Exception:
+                pass
         self._media = media if callable(media) else None
         try:
             nodes, order, parents, children = build_dag(graph)
@@ -239,7 +266,8 @@ class Engine:
         # ctx["run_flow"](name, vars) runs another saved flow as a subflow
         stack = list(call_stack or [flow_name])
         ctx["run_flow"] = lambda name, vars=None: self._run_subflow(
-            name, environment, env_vars, vars or {}, stack, log_fn, self._media)
+            name, environment, env_vars, vars or {}, stack, log_fn,
+            self._media, cancel)
 
         node_outputs = {}  # id -> outputs, used to resolve each node's `last`
 
@@ -272,32 +300,127 @@ class Engine:
                     return exec_id, "error", err
             run_ids = order
 
-        for nid in run_ids:
-            node = nodes[nid]
-            # outputs of every connected parent that produced any, in order
-            ins = [node_outputs[p] for p in parents.get(nid, [])
-                   if p in node_outputs]
-            last = ins[0] if ins else {}
-            ok, fatal_error, outputs = self._execute_node(
-                exec_id, node, ctx, last, ins, log_fn, published)
-            if not ok:
-                self.db.finish_execution(
-                    exec_id, "failed", fatal_error,
-                    _context_snapshot(ctx, env_vars))
-                return exec_id, "failed", fatal_error
-            if outputs is not None:
-                node_outputs[nid] = outputs
+        try:
+            self._run_nodes(exec_id, run_ids, nodes, parents, children,
+                            ctx, node_outputs, log_fn, published, cancel)
+        except ExecutionCancelled:
+            self.db.finish_execution(exec_id, "cancelled", "cancelled by user",
+                                     _context_snapshot(ctx, env_vars))
+            return exec_id, "cancelled", "cancelled by user"
+        except _NodeFailed as nf:
+            self.db.finish_execution(exec_id, "failed", nf.error,
+                                     _context_snapshot(ctx, env_vars))
+            return exec_id, "failed", nf.error
+
+        if cancel is not None and cancel.is_set():
+            self.db.finish_execution(exec_id, "cancelled", "cancelled by user",
+                                     _context_snapshot(ctx, env_vars))
+            return exec_id, "cancelled", "cancelled by user"
 
         self.db.finish_execution(exec_id, "passed", None,
                                  _context_snapshot(ctx, env_vars))
         return exec_id, "passed", None
 
+    def _run_nodes(self, exec_id, ids, nodes, parents, children, ctx,
+                   node_outputs, log_fn, published, cancel, label=""):
+        """Execute `ids` (in topological order) against `ctx`/`node_outputs`.
+
+        Raises `_NodeFailed` on the first node failure (so callers can stop or,
+        for fan-out items, catch and continue) and `ExecutionCancelled` if the
+        cancel token fires. Nodes claimed by a split at this level are run
+        inside that split (fan-out), not here.
+        """
+        id_set = set(ids)
+        claimed = set()
+        for nid in ids:
+            cls = self.registry.get(nodes[nid].get("type"))
+            if cls is not None and getattr(cls, "is_split", False):
+                claimed |= (_descendants(nid, children) & id_set)
+
+        for nid in ids:
+            if nid in claimed:
+                continue  # handled inside its split's per-item loop
+            if cancel is not None and cancel.is_set():
+                raise ExecutionCancelled()
+            node = nodes[nid]
+            cls = self.registry.get(node.get("type"))
+            ins = [node_outputs[p] for p in parents.get(nid, [])
+                   if p in node_outputs]
+            last = ins[0] if ins else {}
+            if cls is not None and getattr(cls, "is_split", False):
+                self._run_split(exec_id, nid, ids, nodes, parents, children,
+                                ctx, node_outputs, log_fn, published, cancel,
+                                label, ins, last)
+                continue
+            ok, fatal_error, outputs = self._execute_node(
+                exec_id, node, ctx, last, ins, log_fn, published,
+                step_suffix=label)
+            if not ok:
+                raise _NodeFailed(fatal_error)
+            if outputs is not None:
+                node_outputs[nid] = outputs
+
+    def _run_split(self, exec_id, split_id, ids, nodes, parents, children,
+                   ctx, node_outputs, log_fn, published, cancel, label,
+                   ins, last):
+        """Run a fan-out node, then its descendant subgraph once per item."""
+        node = nodes[split_id]
+        name = _name(node)
+        # 1. run the split node itself to obtain the item list
+        ok, err, outputs = self._execute_node(
+            exec_id, node, ctx, last, ins, log_fn, published,
+            step_suffix=label)
+        if not ok:
+            raise _NodeFailed(err)
+        outputs = outputs or {}
+        items = outputs.get("items")
+        if not isinstance(items, list):
+            items = []
+        stop_on_error = bool(outputs.get("stop_on_error", False))
+        node_outputs[split_id] = {"items": items, "count": len(items)}
+
+        # 2. descendant subgraph (restricted to this level), in topo order
+        reachable = _descendants(split_id, children) & set(ids)
+        sub_ids = [nid for nid in ids if nid in reachable]
+        aliases = node.get("out_aliases") or {}
+
+        failures = 0
+        for i, el in enumerate(items):
+            if cancel is not None and cancel.is_set():
+                raise ExecutionCancelled()
+            per_item = {"item": el, "index": i}
+            iter_ctx = dict(ctx)
+            iter_ctx["item"] = el
+            iter_ctx["index"] = i
+            for oname, alias in aliases.items():
+                alias = str(alias).strip()
+                if alias and alias != "last" and oname in per_item:
+                    iter_ctx[alias] = per_item[oname]
+            iter_outputs = dict(node_outputs)
+            iter_outputs[split_id] = per_item  # children's `last` = the item
+            try:
+                self._run_nodes(
+                    exec_id, sub_ids, nodes, parents, children, iter_ctx,
+                    iter_outputs, log_fn, published, cancel,
+                    label=f"{label}#{i} ")
+            except _NodeFailed as nf:
+                failures += 1
+                log_fn(f"{name}: item {i} failed: {nf.error}")
+                if stop_on_error:
+                    raise _NodeFailed(
+                        f"{name}: item {i} failed: {nf.error}")
+        if failures:
+            raise _NodeFailed(
+                f"{name}: {failures}/{len(items)} item(s) failed")
+        log_fn(f"{name}: {len(items)} item(s) ok")
+
     def _run_subflow(self, name, environment, env_vars, seed_vars, stack,
-                     log_fn, media):
+                     log_fn, media, cancel=None):
         """Run another saved flow by name (used by ctx['run_flow']).
 
         Returns {execution_id, status, error, outputs} where `outputs` is the
-        subflow's published output aliases. Guards against recursion.
+        subflow's published output aliases. Guards against recursion. The
+        parent's cancel token is shared, so cancelling aborts subflows too.
         """
         name = str(name or "").strip()
         if not name:
@@ -315,20 +438,22 @@ class Engine:
         exec_id, status, error = self.execute(
             flow["id"], flow["name"], flow["graph"], environment=environment,
             env_vars=env_vars, seed_vars=seed_vars, out_collector=collector,
-            call_stack=stack + [name], log=log_fn, media=media)
+            call_stack=stack + [name], log=log_fn, media=media, cancel=cancel)
         return {"execution_id": exec_id, "status": status, "error": error,
                 "outputs": collector}
 
     def _execute_node(self, exec_id, node, ctx, last, ins=None, log_fn=None,
-                      published=None):
+                      published=None, step_suffix=""):
         """Run one node. Returns (ok, error, outputs).
 
         `last` is the outputs of this node's first connected parent and `ins`
         is the list of outputs of all connected parents (in order) — use it
         for join nodes that need every input, e.g. `ins[1]`. Records the step.
-        A skipped node returns (True, None, None).
+        A skipped node returns (True, None, None). `step_suffix` is appended to
+        the recorded step's node_name (e.g. " #2" during fan-out) for display.
         """
         name = _name(node)
+        step_name = name + step_suffix
         ctx["last"] = last  # this node's view of the previous node's outputs
         ctx["ins"] = list(ins) if ins else []  # all parents' outputs, in order
         # node-scoped logger: ctx["log"]("hi", x) -> "<node name>: hi <x>"
@@ -341,7 +466,7 @@ class Engine:
 
         def record(status, error=None, inputs=None, outputs=None):
             self.db.add_step(
-                exec_id, node.get("id"), name, node.get("type"), status,
+                exec_id, node.get("id"), step_name, node.get("type"), status,
                 error, _json(inputs or {}), _json(outputs or {}), t0,
                 time.time())
 

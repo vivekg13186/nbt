@@ -345,7 +345,8 @@ export class NbtGraph {
       this.size = this.computeSize();
       this.size[0] = Math.max(this.size[0], 240);
     }
-    (N as any).title = meta.label + (meta.is_trigger ? " ⚡" : "");
+    (N as any).title =
+      meta.label + (meta.is_trigger ? " ⚡" : meta.is_split ? " ⑂" : "");
     (N as any).prototype.nbtType = meta.type;
     // Non-trigger nodes accept multiple parents (joins) via dynamic input pins.
     if (!meta.is_trigger) {
