@@ -3,7 +3,6 @@ import { App as AntApp } from "antd";
 import { FileJson } from "lucide-react";
 import { useStore } from "./store";
 import { api } from "./api";
-import type { Graph } from "./types";
 import TabBar from "./components/TabBar";
 import Toolbar from "./components/Toolbar";
 import IconRail from "./components/IconRail";
@@ -50,50 +49,27 @@ export default function App() {
     }
   }
 
-  // Import a dropped workflow JSON file as a new workflow tab, or show why
-  // it couldn't be imported.
+  // Import a dropped workflow file (.json/.yaml) as a new workflow tab, or a
+  // dropped package bundle (.nbtpack/.zip), or show why it couldn't be used.
   async function importFile(file: File) {
     if (/\.(nbtpack|zip)$/i.test(file.name)) {
       importPackage(file);
       return;
     }
-    if (!/\.json$/i.test(file.name)) {
-      message.error(`"${file.name}" is not a .json or .nbtpack/.zip file`);
-      return;
-    }
-    let data: unknown;
-    try {
-      data = JSON.parse(await file.text());
-    } catch (e) {
-      message.error(`Invalid JSON in "${file.name}": ${(e as Error).message}`);
-      return;
-    }
-    const obj = data as { nodes?: unknown; links?: unknown };
-    if (!obj || typeof obj !== "object" || !Array.isArray(obj.nodes)) {
+    if (!/\.(json|ya?ml)$/i.test(file.name)) {
       message.error(
-        `"${file.name}" is not a workflow graph (expected an object with a "nodes" array)`,
+        `"${file.name}" is not a .json/.yaml workflow or .nbtpack/.zip package`,
       );
       return;
     }
-    const graph: Graph = {
-      nodes: obj.nodes as Graph["nodes"],
-      links: Array.isArray(obj.links) ? (obj.links as Graph["links"]) : [],
-    };
-    const base = file.name.replace(/\.json$/i, "") || "Imported flow";
-    for (let i = 0; ; i++) {
-      const name = i === 0 ? base : `${base} (${i})`;
-      try {
-        const flow = await api.createFlow(name, graph);
-        await refreshFlows();
-        openFlow(flow.id);
-        message.success(`Imported "${name}"`);
-        return;
-      } catch (e) {
-        const msg = (e as Error).message;
-        if (/exist|already|use/i.test(msg) && i < 20) continue; // name clash
-        message.error(`Import failed: ${msg}`);
-        return;
-      }
+    try {
+      // the backend reads name + folder from the file and de-dups the name
+      const flow = await api.importFlow(file);
+      await refreshFlows();
+      openFlow(flow.id);
+      message.success(`Imported "${flow.name}"`);
+    } catch (e) {
+      message.error(`Import failed: ${(e as Error).message}`);
     }
   }
 
@@ -156,8 +132,8 @@ export default function App() {
           <div className="nbt-dropzone-card">
             <FileJson size={40} />
             <div style={{ marginTop: 10, fontSize: 16 }}>
-              Drop a workflow <code>.json</code> or a node package{" "}
-              <code>.nbtpack</code> to install it
+              Drop a workflow <code>.json</code> / <code>.yaml</code> or a node
+              package <code>.nbtpack</code> to install it
             </div>
           </div>
         </div>

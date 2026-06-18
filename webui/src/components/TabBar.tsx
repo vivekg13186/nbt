@@ -13,7 +13,6 @@ import { Download, Menu, Plus, Upload, X } from "lucide-react";
 import { useStore } from "../store";
 import { api } from "../api";
 import { activeGraphRef } from "../graph/active";
-import type { Graph } from "../types";
 import VersionsDrawer from "./VersionsDrawer";
 
 export default function TabBar() {
@@ -53,65 +52,34 @@ export default function TabBar() {
     }
   }
 
-  // ----- export: download a workflow's graph as JSON -----
-  async function exportFlow(id: string) {
+  // ----- export: download a workflow as a JSON or YAML file -----
+  async function exportFlow(id: string, format: "json" | "yaml" = "json") {
     try {
-      const name = nameOf(id);
-      const graph =
-        id === activeGraphRef.flowId && activeGraphRef.current
-          ? activeGraphRef.current.exportGraph()
-          : (await api.getFlow(id)).graph;
-      const blob = new Blob([JSON.stringify(graph, null, 2)], {
-        type: "application/json",
-      });
-      const url = URL.createObjectURL(blob);
+      // save first so the file matches what's currently on the canvas
+      if (id === activeGraphRef.flowId) await saveActiveGraph();
       const a = document.createElement("a");
-      a.href = url;
-      a.download = `${name}.json`;
+      a.href = api.exportFlowFileUrl(id, format);
       a.click();
-      setTimeout(() => URL.revokeObjectURL(url), 1000);
     } catch (e) {
       message.error((e as Error).message);
     }
   }
 
-  // ----- import: read a .json file as a new workflow -----
+  // ----- import: a .json/.yaml workflow file becomes a new workflow.
+  // The backend reads the name + folder from the file (falling back to the
+  // file name) and de-duplicates the name. -----
   async function importFromFile(file: File) {
-    if (!/\.json$/i.test(file.name)) {
-      message.error(`"${file.name}" is not a .json file`);
+    if (!/\.(json|ya?ml)$/i.test(file.name)) {
+      message.error(`"${file.name}" is not a .json or .yaml file`);
       return;
     }
-    let data: unknown;
     try {
-      data = JSON.parse(await file.text());
+      const flow = await api.importFlow(file);
+      await refreshFlows();
+      openFlow(flow.id);
+      message.success(`Imported "${flow.name}"`);
     } catch (e) {
-      message.error(`Invalid JSON: ${(e as Error).message}`);
-      return;
-    }
-    const obj = data as { nodes?: unknown; links?: unknown };
-    if (!obj || typeof obj !== "object" || !Array.isArray(obj.nodes)) {
-      message.error('Not a workflow graph (expected an object with "nodes")');
-      return;
-    }
-    const graph: Graph = {
-      nodes: obj.nodes as Graph["nodes"],
-      links: Array.isArray(obj.links) ? (obj.links as Graph["links"]) : [],
-    };
-    const base = file.name.replace(/\.json$/i, "") || "Imported flow";
-    for (let i = 0; ; i++) {
-      const name = i === 0 ? base : `${base} (${i})`;
-      try {
-        const flow = await api.createFlow(name, graph);
-        await refreshFlows();
-        openFlow(flow.id);
-        message.success(`Imported "${name}"`);
-        return;
-      } catch (e) {
-        const msg = (e as Error).message;
-        if (/exist|already|use/i.test(msg) && i < 20) continue;
-        message.error(`Import failed: ${msg}`);
-        return;
-      }
+      message.error(`Import failed: ${(e as Error).message}`);
     }
   }
 
@@ -170,7 +138,14 @@ export default function TabBar() {
         { key: "save", label: "Save" },
         { key: "rename", label: "Rename" },
         { key: "duplicate", label: "Duplicate" },
-        { key: "export", label: "Export JSON" },
+        {
+          key: "export",
+          label: "Export",
+          children: [
+            { key: "export:json", label: "JSON (.json)" },
+            { key: "export:yaml", label: "YAML (.yaml)" },
+          ],
+        },
         { type: "divider" },
         { key: "snapshot", label: "Snapshot version" },
         { key: "versions", label: "Version history…" },
@@ -192,8 +167,10 @@ export default function TabBar() {
           renameFlow(id, name);
         } else if (key === "duplicate") {
           duplicateFlow(id, name);
-        } else if (key === "export") {
-          exportFlow(id);
+        } else if (key === "export:json") {
+          exportFlow(id, "json");
+        } else if (key === "export:yaml") {
+          exportFlow(id, "yaml");
         } else if (key === "snapshot") {
           snapshotFlow(id, name);
         } else if (key === "versions") {
@@ -345,7 +322,7 @@ export default function TabBar() {
           onClick={() => setNewOpen(true)}
         />
       </Tooltip>
-      <Tooltip title="Import workflow (.json)">
+      <Tooltip title="Import workflow (.json / .yaml)">
         <Button
           type="text"
           size="small"
@@ -353,19 +330,30 @@ export default function TabBar() {
           onClick={() => importRef.current?.click()}
         />
       </Tooltip>
-      <Tooltip title="Export current workflow (.json)">
+      <Dropdown
+        trigger={["click"]}
+        disabled={!activeFlowId}
+        menu={{
+          items: [
+            { key: "json", label: "JSON (.json)" },
+            { key: "yaml", label: "YAML (.yaml)" },
+          ],
+          onClick: ({ key }) =>
+            activeFlowId && exportFlow(activeFlowId, key as "json" | "yaml"),
+        }}
+      >
         <Button
           type="text"
           size="small"
           icon={<Download size={15} />}
           disabled={!activeFlowId}
-          onClick={() => activeFlowId && exportFlow(activeFlowId)}
+          title="Export current workflow (.json / .yaml)"
         />
-      </Tooltip>
+      </Dropdown>
       <input
         ref={importRef}
         type="file"
-        accept=".json"
+        accept=".json,.yaml,.yml"
         style={{ display: "none" }}
         onChange={(e) => {
           const f = e.target.files?.[0];

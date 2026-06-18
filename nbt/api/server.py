@@ -26,7 +26,7 @@ from collections import deque
 from pathlib import Path
 from typing import Any, Optional
 
-from fastapi import (FastAPI, File, HTTPException, Response, UploadFile,
+from fastapi import (FastAPI, File, Form, HTTPException, Response, UploadFile,
                      WebSocket, WebSocketDisconnect)
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.concurrency import run_in_threadpool
@@ -36,6 +36,8 @@ from pydantic import BaseModel
 from ..core.listener import FlowListener
 from ..core.engine import Engine
 from ..core.packages import PackageManager, PackageError
+from ..core.flow_files import (dump_flow, parse_flow_doc, safe_filename,
+                               name_from_filename)
 from ..core.scheduler import FlowScheduler, CronError, cron_next, parse_cron
 
 
@@ -342,12 +344,10 @@ def create_app(db, registry) -> FastAPI:
         return db.list_flows()
 
     @app.get("/api/flows/export")
-    def export_flows(folder: Optional[str] = None):
-        """Zip of one importable <name>.json per flow (graph only), optionally
-        limited to a single folder. `folder=""` exports the ungrouped flows."""
-        def _safe(s):
-            return re.sub(r"[^A-Za-z0-9 _.\-]+", "_", s or "").strip() or "flow"
-
+    def export_flows(folder: Optional[str] = None, format: str = "json"):
+        """Zip of one importable <name>.<ext> per flow (name + folder + graph),
+        optionally limited to a single folder. `folder=""` exports the
+        ungrouped flows. `format` is json (default) or yaml."""
         rows = db.list_flows()
         if folder is not None:
             rows = [r for r in rows if (r.get("folder") or "") == folder]
@@ -357,14 +357,42 @@ def create_app(db, registry) -> FastAPI:
                 flow = db.get_flow(r["id"])
                 if not flow:
                     continue
+                content, ext, _ = dump_flow(flow, format)
                 fld = (flow.get("folder") or "").strip()
-                path = (f"{_safe(fld)}/" if fld else "") + _safe(flow["name"]) \
-                    + ".json"
-                z.writestr(path, json.dumps(flow["graph"], indent=2))
-        fname = (_safe(folder) if folder else "nbt-flows") + ".zip"
+                path = (f"{safe_filename(fld)}/" if fld else "") \
+                    + safe_filename(flow["name"]) + "." + ext
+                z.writestr(path, content)
+        fname = (safe_filename(folder) if folder else "nbt-flows") + ".zip"
         return Response(
             content=buf.getvalue(), media_type="application/zip",
             headers={"Content-Disposition": f'attachment; filename="{fname}"'})
+
+    @app.post("/api/flows/import")
+    async def import_flow(file: UploadFile = File(...),
+                          folder: Optional[str] = Form(None)):
+        """Create a flow from an uploaded JSON/YAML workflow file. The flow
+        name comes from the file's `name` (else its file name); the folder
+        comes from the `folder` form field (override) or the file's `folder`.
+        The name is de-duplicated so import never clashes."""
+        raw = (await file.read()).decode("utf-8", "replace")
+        try:
+            doc = parse_flow_doc(raw, file.filename or "")
+        except Exception as e:
+            raise HTTPException(
+                400, f"could not parse '{file.filename}': {e}")
+        base = doc["name"] or name_from_filename(file.filename or "")
+        override = (folder or "").strip() or None
+        fld = override or doc["folder"]
+        name, i = base, 1
+        while db.get_flow_by_name(name):
+            name = f"{base} ({i})"
+            i += 1
+            if i > 999:
+                raise HTTPException(409, "too many name collisions")
+        fid = db.create_flow(name, doc["graph"], fld or None)
+        logbus.emit(f"[flow] imported '{name}'"
+                    + (f" -> folder '{fld}'" if fld else ""))
+        return db.get_flow(fid)
 
     @app.get("/api/flows/{flow_id}")
     def get_flow(flow_id: str):
@@ -373,6 +401,21 @@ def create_app(db, registry) -> FastAPI:
             raise HTTPException(404, "flow not found")
         flow["listening"] = flow_id in listeners.listeners
         return flow
+
+    @app.get("/api/flows/{flow_id}/export")
+    def export_flow_file(flow_id: str, format: str = "json"):
+        """Download a single flow as a JSON/YAML workflow file (name + folder
+        + graph)."""
+        flow = db.get_flow(flow_id)
+        if flow is None:
+            raise HTTPException(404, "flow not found")
+        if (format or "json").lower() not in ("json", "yaml", "yml"):
+            raise HTTPException(400, "format must be json or yaml")
+        content, ext, media = dump_flow(flow, format)
+        fname = safe_filename(flow["name"]) + "." + ext
+        return Response(
+            content=content, media_type=media,
+            headers={"Content-Disposition": f'attachment; filename="{fname}"'})
 
     @app.post("/api/flows")
     def create_flow(body: FlowCreate):

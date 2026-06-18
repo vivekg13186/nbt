@@ -49,9 +49,10 @@ npm run build                        # outputs to webui/dist/
 ## Layout
 
 - **Tab bar** — open workflows as tabs. Right-click a tab (or click the `≡`
-  glyph) for **Save / Rename / Duplicate / Close / Delete / Export JSON**. `+`
-  adds a workflow; the up/down-arrow buttons **import** (`.json`) and **export**
-  the active workflow.
+  glyph) for **Save / Rename / Duplicate / Close / Delete / Export ▸ JSON|YAML**.
+  `+` adds a workflow; the up/down-arrow buttons **import** (`.json` / `.yaml`)
+  and **export** (JSON or YAML) the active workflow. Files carry the flow's name
+  and folder — see `../docs/FLOW_FILES.md`.
 - **Toolbar** — active workflow name, **Add node**, an editing group (**undo**,
   **redo**, **auto-layout**, **zoom-to-fit**, **minimap** toggle, and a
   **shortcuts** help button), **environment** selector, **Save**, **Listen**,
@@ -85,8 +86,8 @@ npm run build                        # outputs to webui/dist/
     CSV item, with per-item steps labelled `node #0`, `node #1`, …
 - **Bottom panel** — two tabs: an interactive **Shell** (xterm.js over a PTY
   WebSocket) and a **Log** stream of run/listener/package output.
-- **Drag-and-drop** anywhere on the window: a `.json` imports as a new workflow;
-  a `.nbtpack`/`.zip` installs as a node package.
+- **Drag-and-drop** anywhere on the window: a `.json` / `.yaml` imports as a new
+  workflow; a `.nbtpack`/`.zip` installs as a node package.
 
 ## Keyboard shortcuts
 

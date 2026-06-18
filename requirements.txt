@@ -1,4 +1,5 @@
 fastapi>=0.110
 uvicorn[standard]>=0.29
 python-multipart>=0.0.9
+pyyaml>=6.0           # YAML import/export of workflow files
 requests>=2.31        # used by bundled HTTP/Confluence-style nodes

@@ -45,12 +45,38 @@ export const api = {
   // flows
   listFlows: () => req<FlowSummary[]>("/flows"),
   // URL of the export zip (all flows, or one folder). folder "" = ungrouped.
-  exportFlowsUrl: (folder?: string | null) =>
-    BASE +
-    "/flows/export" +
-    (folder === undefined || folder === null
-      ? ""
-      : `?folder=${encodeURIComponent(folder)}`),
+  exportFlowsUrl: (folder?: string | null, format: "json" | "yaml" = "json") => {
+    const params = new URLSearchParams();
+    if (folder !== undefined && folder !== null) params.set("folder", folder);
+    if (format !== "json") params.set("format", format);
+    const qs = params.toString();
+    return BASE + "/flows/export" + (qs ? `?${qs}` : "");
+  },
+  // URL to download one flow as a json/yaml workflow file
+  exportFlowFileUrl: (id: string, format: "json" | "yaml" = "json") =>
+    `${BASE}/flows/${id}/export?format=${format}`,
+  // import a workflow file (.json/.yaml/.yml); folder optionally overrides the
+  // file's own folder. Returns the created flow.
+  importFlow: async (file: File, folder?: string | null) => {
+    const form = new FormData();
+    form.append("file", file);
+    if (folder) form.append("folder", folder);
+    const res = await fetch(BASE + "/flows/import", {
+      method: "POST",
+      body: form,
+    });
+    if (!res.ok) {
+      let detail = res.statusText;
+      try {
+        const b = await res.json();
+        if (b?.detail) detail = b.detail;
+      } catch {
+        /* ignore */
+      }
+      throw new Error(detail);
+    }
+    return (await res.json()) as Flow;
+  },
   getFlow: (id: string) => req<Flow>(`/flows/${id}`),
   createFlow: (name: string, graph?: Graph, folder?: string | null) =>
     req<Flow>("/flows", {

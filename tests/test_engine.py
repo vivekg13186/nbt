@@ -455,6 +455,38 @@ def main():
     check("flow delete cascades to schedules",
           len(db.list_schedules()) == 0, str(db.list_schedules()))
 
+    # ---- workflow files: JSON / YAML import-export round-trip ----
+    import json as _json
+    from nbt.core.flow_files import (dump_flow, parse_flow_doc,
+                                     name_from_filename)
+    wf_row = {"name": "Wf One", "folder": "Billing",
+              "graph": {"nodes": [node("n1", "set_value", "v",
+                                        {"value": "x"})], "links": []}}
+    cj, ej, _mj = dump_flow(wf_row, "json")
+    cy, ey, _my = dump_flow(wf_row, "yaml")
+    check("dump extensions", ej == "json" and ey == "yaml")
+    dj = parse_flow_doc(cj, "Wf One.json")
+    check("json round-trips name + folder",
+          dj["name"] == "Wf One" and dj["folder"] == "Billing"
+          and len(dj["graph"]["nodes"]) == 1, str(dj))
+    dy = parse_flow_doc(cy, "Wf One.yaml")
+    check("yaml round-trips name + folder",
+          dy["name"] == "Wf One" and dy["folder"] == "Billing"
+          and len(dy["graph"]["nodes"]) == 1, str(dy))
+    bare = parse_flow_doc(
+        _json.dumps({"nodes": [node("n1", "set_value", "v", {"value": "x"})],
+                     "links": []}), "legacy flow.json")
+    check("bare graph: no name/folder, graph intact",
+          bare["name"] is None and bare["folder"] is None
+          and len(bare["graph"]["nodes"]) == 1, str(bare))
+    check("name from filename strips path + extension",
+          name_from_filename("/a/b/My Flow.yaml") == "My Flow")
+    try:
+        parse_flow_doc("not a workflow at all", "x.json")
+        check("invalid file rejected", False, "no error raised")
+    except ValueError:
+        check("invalid file rejected", True)
+
     # ---- executions are persisted ----
     check("executions listed", len(db.list_executions()) >= 1)
     db.clear_executions()
