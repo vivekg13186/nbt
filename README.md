@@ -31,6 +31,22 @@ cd webui && npm run dev                   # SPA -> http://localhost:5173 (proxie
 
 See `webui/README.md` for UI details.
 
+## Command-line client (`nbtcli.py`)
+
+`nbtcli.py` is a standalone client (standard library only — no dependencies) that talks to a running NBT server to **list, upload, download and run** workflows:
+
+```bash
+python nbtcli.py list                              # all workflows (table)
+python nbtcli.py list --folder Billing --json      # one folder, raw JSON
+python nbtcli.py upload flow.yaml                   # import a .json/.yaml file
+python nbtcli.py upload flow.json --folder Billing  # ...into a folder
+python nbtcli.py download "My Flow"                 # save My Flow.json
+python nbtcli.py download "My Flow" --format yaml   # save My Flow.yaml
+python nbtcli.py run "My Flow" --env staging        # run; exit 0 if passed
+```
+
+A workflow argument is a flow id or a (case-insensitive) name. The server defaults to `http://localhost:8000`; override with `--server URL` or the `NBT_SERVER` environment variable. `run` exits 0 only when the run passes, so it's CI-friendly. (`main.py` is the in-process headless runner; `nbtcli.py` is the over-the-network client.)
+
 ## Distributable build
 
 Produce a self-contained zip (built UI included, so recipients only need
