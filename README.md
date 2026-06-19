@@ -42,10 +42,15 @@ python nbtcli.py upload flow.yaml                   # import a .json/.yaml file
 python nbtcli.py upload flow.json --folder Billing  # ...into a folder
 python nbtcli.py download "My Flow"                 # save My Flow.json
 python nbtcli.py download "My Flow" --format yaml   # save My Flow.yaml
+python nbtcli.py update "My Flow" My\ Flow.yaml      # push edits back in place
 python nbtcli.py run "My Flow" --env staging        # run; exit 0 if passed
 ```
 
-A workflow argument is a flow id or a (case-insensitive) name. The server defaults to `http://localhost:8000`; override with `--server URL` or the `NBT_SERVER` environment variable. `run` exits 0 only when the run passes, so it's CI-friendly. (`main.py` is the in-process headless runner; `nbtcli.py` is the over-the-network client.)
+The typical loop is `download` → edit the file → `update` (which updates the **same** flow rather than creating a copy). A workflow argument is a flow id or a (case-insensitive) name.
+
+## VS Code extension
+
+`vscode-extension/` is a VS Code extension that exposes server flows as **virtual YAML files** (`nbt://`): a Workflows view lists folders → flows, opening one downloads it as YAML, **saving uploads it back to the same flow in place**, and ▶ runs it (output streams to an "NBT" channel). It's a thin client over the same API (`export?format=yaml` to open, `import` with `flow_id` to save, `run` to run) and has no runtime dependencies. See `vscode-extension/README.md` to build (`npm install && npm run compile`), debug (F5), or package (`vsce package`). The server defaults to `http://localhost:8000`; override with `--server URL` or the `NBT_SERVER` environment variable. `run` exits 0 only when the run passes, so it's CI-friendly. (`main.py` is the in-process headless runner; `nbtcli.py` is the over-the-network client.)
 
 ## Distributable build
 

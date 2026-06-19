@@ -1,0 +1,87 @@
+{
+  "name": "nbt-flows",
+  "displayName": "NBT Flows",
+  "description": "Browse, edit, and run NBT workflows directly from the server as virtual YAML files.",
+  "version": "0.1.0",
+  "publisher": "nbt",
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.84.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onView:nbtFlows",
+    "onFileSystem:nbt"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "configuration": {
+      "title": "NBT",
+      "properties": {
+        "nbt.serverUrl": {
+          "type": "string",
+          "default": "http://localhost:8000",
+          "description": "Base URL of the NBT server."
+        },
+        "nbt.environment": {
+          "type": "string",
+          "default": "",
+          "description": "Environment name to use when running a flow (blank = none)."
+        }
+      }
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "nbt",
+          "title": "NBT Flows",
+          "icon": "media/nbt.svg"
+        }
+      ]
+    },
+    "views": {
+      "nbt": [
+        {
+          "id": "nbtFlows",
+          "name": "Workflows"
+        }
+      ]
+    },
+    "commands": [
+      { "command": "nbt.refresh", "title": "NBT: Refresh", "icon": "$(refresh)" },
+      { "command": "nbt.newFlow", "title": "NBT: New Flow", "icon": "$(add)" },
+      { "command": "nbt.run", "title": "NBT: Run Flow", "icon": "$(play)" },
+      { "command": "nbt.openFlow", "title": "NBT: Open Flow" },
+      { "command": "nbt.deleteFlow", "title": "NBT: Delete Flow" },
+      { "command": "nbt.setServer", "title": "NBT: Set Server URL" }
+    ],
+    "menus": {
+      "view/title": [
+        { "command": "nbt.newFlow", "when": "view == nbtFlows", "group": "navigation@1" },
+        { "command": "nbt.refresh", "when": "view == nbtFlows", "group": "navigation@2" }
+      ],
+      "view/item/context": [
+        { "command": "nbt.run", "when": "view == nbtFlows && viewItem == flow", "group": "inline" },
+        { "command": "nbt.deleteFlow", "when": "view == nbtFlows && viewItem == flow" }
+      ],
+      "editor/title": [
+        { "command": "nbt.run", "when": "resourceScheme == nbt", "group": "navigation" }
+      ],
+      "commandPalette": [
+        { "command": "nbt.openFlow", "when": "false" }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "tsc -p .",
+    "watch": "tsc -watch -p .",
+    "vscode:prepublish": "tsc -p ."
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/vscode": "^1.84.0",
+    "typescript": "^5.4.0"
+  }
+}

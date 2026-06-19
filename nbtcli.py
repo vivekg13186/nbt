@@ -6,13 +6,16 @@ API. Pure standard library (urllib) — no third-party packages required.
 
     nbtcli list                              # all workflows
     nbtcli list --folder Billing             # one folder ("" = ungrouped)
-    nbtcli upload flow.yaml                   # import a .json/.yaml file
+    nbtcli upload flow.yaml                   # import a .json/.yaml file (new)
     nbtcli upload flow.json --folder Billing  # ...into a folder
     nbtcli download "My Flow"                 # save My Flow.json
     nbtcli download "My Flow" --format yaml   # save My Flow.yaml
     nbtcli download 9f1c2ab34d5e --out f.json # by id, to a path
+    nbtcli update "My Flow" f.yaml            # push edits back to that flow
     nbtcli run "My Flow"                      # run, print result, exit 0/1
     nbtcli run "My Flow" --env staging        # run with an environment
+
+A typical edit loop: `download` a flow, edit the file, `update` it back.
 
 A workflow argument may be a flow id or a (case-insensitive) name.
 The server defaults to http://localhost:8000 — override with --server URL or
@@ -199,6 +202,25 @@ def cmd_download(args):
     return 0
 
 
+def cmd_update(args):
+    base = _server(args)
+    flow = resolve_flow(base, args.flow)
+    path = args.file
+    if not os.path.isfile(path):
+        raise ApiError(f"file not found: {path}")
+    with open(path, "rb") as fh:
+        data = fh.read()
+    # the server parses the file and updates this flow in place
+    res = api_post_multipart(
+        base, "/api/flows/import",
+        {"flow_id": flow["id"], "folder": args.folder},
+        "file", os.path.basename(path), data)
+    folder = res.get("folder")
+    print(f"updated '{res['name']}' (id {res['id']})"
+          + (f" -> folder '{folder}'" if folder else ""))
+    return 0
+
+
 def cmd_run(args):
     base = _server(args)
     flow = resolve_flow(base, args.flow)
@@ -240,6 +262,13 @@ def build_parser():
     pd.add_argument("--format", choices=["json", "yaml"], default="json")
     pd.add_argument("--out", help="output path (default <name>.<ext>)")
     pd.set_defaults(func=cmd_download)
+
+    pun = sub.add_parser(
+        "update", help="push a local file's content to an existing workflow")
+    pun.add_argument("flow", help="workflow name or id to update")
+    pun.add_argument("file", help="path to the workflow file")
+    pun.add_argument("--folder", help="also move it to this folder")
+    pun.set_defaults(func=cmd_update)
 
     pr = sub.add_parser("run", help="run a workflow and print the result")
     pr.add_argument("flow", help="workflow name or id")

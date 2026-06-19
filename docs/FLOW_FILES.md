@@ -93,9 +93,15 @@ In JSON: `"links": [["n1", "n2"], ["n2", "n3"]]`.
   or **a single folder** (download on the folder header) as a `.zip` of
   `<folder>/<name>.<ext>` files, in JSON or YAML. Re-importing those files
   restores each flow's name and folder.
-- **API:** `GET /api/flows/{id}/export?format=json|yaml`,
-  `GET /api/flows/export?folder=&format=json|yaml` (zip), and
-  `POST /api/flows/import` (multipart `file`, optional `folder`).
+- **API:**
+  - `GET /api/flows/{id}/export?format=json|yaml` — download one flow.
+  - `GET /api/flows/export?folder=&format=json|yaml` — zip of many flows.
+  - `POST /api/flows/import` — multipart `file`, optional `folder`. Creates a
+    new flow; pass an optional `flow_id` form field to **update that flow in
+    place** instead (so a client needs no YAML parser — the server parses).
+  - `PUT /api/flows/{id}` — replace a flow from a JSON doc
+    `{name?, folder?, graph}` (the "save this file back" call, e.g. for a
+    VS Code extension that parses YAML client-side).
 
 ## Minimal example (YAML)
 

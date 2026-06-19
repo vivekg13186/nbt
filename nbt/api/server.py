@@ -214,6 +214,14 @@ class FlowPatch(BaseModel):
     set_folder: bool = False  # allow clearing folder to null
 
 
+class FlowPut(BaseModel):
+    """Replace a flow from a workflow doc (name + folder + graph)."""
+    graph: dict
+    name: Optional[str] = None
+    folder: Optional[str] = None
+    set_folder: bool = True  # apply folder (None clears it)
+
+
 class DuplicateBody(BaseModel):
     name: str
 
@@ -369,20 +377,35 @@ def create_app(db, registry) -> FastAPI:
 
     @app.post("/api/flows/import")
     async def import_flow(file: UploadFile = File(...),
-                          folder: Optional[str] = Form(None)):
-        """Create a flow from an uploaded JSON/YAML workflow file. The flow
-        name comes from the file's `name` (else its file name); the folder
-        comes from the `folder` form field (override) or the file's `folder`.
-        The name is de-duplicated so import never clashes."""
+                          folder: Optional[str] = Form(None),
+                          flow_id: Optional[str] = Form(None)):
+        """Create a flow from an uploaded JSON/YAML workflow file, or update an
+        existing flow in place when `flow_id` is given (the round-trip
+        edit-then-upload path, so a client needs no YAML parser of its own).
+
+        On create the name comes from the file's `name` (else its file name)
+        and is de-duplicated; the folder comes from the `folder` form field
+        (override) or the file's `folder`."""
         raw = (await file.read()).decode("utf-8", "replace")
         try:
             doc = parse_flow_doc(raw, file.filename or "")
         except Exception as e:
             raise HTTPException(
                 400, f"could not parse '{file.filename}': {e}")
-        base = doc["name"] or name_from_filename(file.filename or "")
         override = (folder or "").strip() or None
         fld = override or doc["folder"]
+
+        if flow_id:  # update an existing flow from the file
+            flow = db.get_flow(flow_id)
+            if flow is None:
+                raise HTTPException(404, "flow not found")
+            updated = _apply_flow_update(
+                flow, name=doc["name"], graph=doc["graph"],
+                folder=fld, set_folder=True)
+            logbus.emit(f"[flow] updated '{updated['name']}' from upload")
+            return updated
+
+        base = doc["name"] or name_from_filename(file.filename or "")
         name, i = base, 1
         while db.get_flow_by_name(name):
             name = f"{base} ({i})"
@@ -429,27 +452,50 @@ def create_app(db, registry) -> FastAPI:
         logbus.emit(f"[flow] created '{name}'")
         return db.get_flow(fid)
 
+    def _apply_flow_update(flow, *, name=None, graph=None,
+                           folder=None, set_folder=False):
+        """Shared update logic for PATCH / PUT / import-in-place. Renames (with
+        a uniqueness check), saves the graph, and/or sets the folder."""
+        fid = flow["id"]
+        if name is not None:
+            new = name.strip()
+            if not new:
+                raise HTTPException(400, "name cannot be empty")
+            if new != flow["name"]:
+                other = db.get_flow_by_name(new)
+                if other and other["id"] != fid:
+                    raise HTTPException(409, "name already in use")
+                db.rename_flow(fid, new)
+                lst = listeners.listeners.get(fid)
+                if lst is not None:
+                    lst.flow["name"] = new
+        if graph is not None:
+            db.save_graph(fid, graph)
+        if set_folder:  # explicit set (folder=None/"" clears it)
+            db.set_flow_folder(fid, (folder or "").strip() or None)
+        return db.get_flow(fid)
+
     @app.patch("/api/flows/{flow_id}")
     def patch_flow(flow_id: str, body: FlowPatch):
         flow = db.get_flow(flow_id)
         if flow is None:
             raise HTTPException(404, "flow not found")
-        if body.name is not None:
-            new = body.name.strip()
-            if not new:
-                raise HTTPException(400, "name cannot be empty")
-            other = db.get_flow_by_name(new)
-            if other and other["id"] != flow_id:
-                raise HTTPException(409, "name already in use")
-            db.rename_flow(flow_id, new)
-            lst = listeners.listeners.get(flow_id)
-            if lst is not None:
-                lst.flow["name"] = new
-        if body.graph is not None:
-            db.save_graph(flow_id, body.graph)
-        if body.set_folder:  # explicit set (folder=None/"" clears it)
-            db.set_flow_folder(flow_id, (body.folder or "").strip() or None)
-        return db.get_flow(flow_id)
+        return _apply_flow_update(
+            flow, name=body.name, graph=body.graph,
+            folder=body.folder, set_folder=body.set_folder)
+
+    @app.put("/api/flows/{flow_id}")
+    def put_flow(flow_id: str, body: FlowPut):
+        """Replace an existing flow from a workflow doc (name + folder + graph)
+        — the canonical 'save this file back to the server' call."""
+        flow = db.get_flow(flow_id)
+        if flow is None:
+            raise HTTPException(404, "flow not found")
+        updated = _apply_flow_update(
+            flow, name=body.name, graph=body.graph,
+            folder=body.folder, set_folder=body.set_folder)
+        logbus.emit(f"[flow] updated '{updated['name']}'")
+        return updated
 
     @app.post("/api/flows/{flow_id}/duplicate")
     def duplicate_flow(flow_id: str, body: DuplicateBody):
