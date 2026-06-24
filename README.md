@@ -1,6 +1,6 @@
 # NBT — Node Based Tester
 
-A web-based node editor (React + LiteGraph.js, FastAPI backend) for building, saving and running test flows, backed by SQLite. Intended for internal, single-user use — there is no authentication, expression fields evaluate Python on the server, and the UI exposes an interactive server shell, so don't expose it beyond a trusted network.
+A web-based node editor (React + React Flow, FastAPI backend) for building, saving and running test flows, backed by SQLite. Intended for internal, single-user use — there is no authentication, expression fields evaluate Python on the server, and the UI exposes an interactive server shell, so don't expose it beyond a trusted network.
 
 ## Run
 

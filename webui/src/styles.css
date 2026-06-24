@@ -7,6 +7,31 @@ body,
     Helvetica, Arial, sans-serif;
 }
 
+/* dark scrollbars (app is dark-only) */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #3a3a3a transparent;
+}
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-track,
+::-webkit-scrollbar-corner {
+  background: transparent;
+}
+::-webkit-scrollbar-thumb {
+  background: #3a3a3a;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+  border-radius: 8px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: #4d4d4d;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+
 .nbt-shell {
   display: flex;
   flex-direction: column;
@@ -193,80 +218,6 @@ body,
   background: var(--nbt-panel);
 }
 
-/* ------------------------------------------------------------------ *
- * LiteGraph popup overrides (context menu, value dialog, search box).
- * These are appended to <body>, so they are themed via tokens on :root
- * / body.nbt-dark rather than the in-tree .nbt-dark scope.
- * ------------------------------------------------------------------ */
-.litegraph.litecontextmenu {
-  background: var(--nbt-panel) !important;
-  border: 1px solid var(--nbt-border) !important;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25) !important;
-  border-radius: 8px !important;
-  overflow: hidden;
-  z-index: 1000;
-  font-family: inherit !important;
-}
-.litegraph.litecontextmenu .litemenu-entry,
-.litegraph.litecontextmenu .litemenu-title {
-  color: var(--nbt-fg) !important;
-  padding: 5px 14px !important;
-  font-size: 13px !important;
-}
-.litegraph.litecontextmenu .litemenu-entry:hover {
-  background: var(--nbt-active) !important;
-  color: var(--nbt-fg) !important;
-}
-.litegraph.litecontextmenu .litemenu-entry.separator {
-  background: var(--nbt-border) !important;
-}
-
-.graphdialog {
-  background: var(--nbt-panel) !important;
-  color: var(--nbt-fg) !important;
-  border: 1px solid var(--nbt-border) !important;
-  border-radius: 8px !important;
-  box-shadow: 0 6px 24px rgba(0, 0, 0, 0.25) !important;
-  padding: 6px 8px !important;
-  font-family: inherit !important;
-  z-index: 1001;
-}
-.graphdialog .name {
-  color: var(--nbt-muted) !important;
-  font-size: 12px !important;
-}
-.graphdialog input,
-.graphdialog textarea,
-.graphdialog select {
-  background: var(--nbt-bg) !important;
-  color: var(--nbt-fg) !important;
-  border: 1px solid var(--nbt-border) !important;
-  border-radius: 6px !important;
-  padding: 4px 8px !important;
-  outline: none;
-}
-.graphdialog input:focus,
-.graphdialog textarea:focus {
-  border-color: var(--nbt-primary) !important;
-}
-.graphdialog button {
-  background: var(--nbt-active) !important;
-  color: var(--nbt-fg) !important;
-  border: 1px solid var(--nbt-border) !important;
-  border-radius: 6px !important;
-  padding: 4px 12px !important;
-  margin-left: 6px;
-  cursor: pointer;
-}
-.litegraph.litesearchbox .helper .lite-search-item {
-  color: var(--nbt-fg) !important;
-}
-.litegraph.litesearchbox .helper .lite-search-item:hover,
-.litegraph.litesearchbox .helper .lite-search-item.selected {
-  background: var(--nbt-active) !important;
-  color: var(--nbt-fg) !important;
-}
-
 /* theme tokens */
 :root {
   --nbt-bg: #ffffff;
@@ -287,4 +238,119 @@ body,
   --nbt-active: #2f2f2f;
   --nbt-muted: #8c8c8c;
   --nbt-primary: #d0d0d0;
+}
+
+/* ---------------- React Flow editor ---------------- */
+.nbt-flow-wrap {
+  flex: 1;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+}
+.nbt-flow-canvas {
+  flex: 1;
+  min-width: 0;
+  position: relative;
+}
+.nbt-flow-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--nbt-muted);
+  pointer-events: none;
+}
+.react-flow__attribution {
+  font-size: 9px;
+  opacity: 0.35;
+}
+
+/* node */
+.nbt-rf-node {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 140px;
+  max-width: 260px;
+  padding: 8px 12px;
+  background: var(--nbt-panel);
+  border: 1px solid var(--nbt-border);
+  border-radius: 8px;
+  color: var(--nbt-fg);
+  font-size: 13px;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.35);
+}
+.nbt-rf-node.selected {
+  border-color: var(--nbt-primary);
+  box-shadow: 0 0 0 1px var(--nbt-primary);
+}
+.nbt-rf-node.trigger {
+  border-left: 3px solid #faad14;
+}
+.nbt-rf-node.split {
+  border-left: 3px solid #5b8fd9;
+}
+.nbt-rf-title {
+  flex: 1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.nbt-rf-marker {
+  opacity: 0.8;
+}
+.nbt-rf-node .react-flow__handle {
+  width: 9px;
+  height: 9px;
+  background: #7a7a7a;
+  border: 1px solid var(--nbt-bg);
+}
+.nbt-rf-node .react-flow__handle-left {
+  left: -5px;
+}
+.nbt-rf-node .react-flow__handle-right {
+  right: -5px;
+}
+
+/* property panel */
+.nbt-property-panel {
+  width: 300px;
+  flex: 0 0 300px;
+  border-left: 1px solid var(--nbt-border);
+  background: var(--nbt-panel);
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+.nbt-pp-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--nbt-border);
+}
+.nbt-pp-body {
+  flex: 1;
+  overflow: auto;
+  padding: 8px;
+}
+.nbt-pp-foot {
+  padding: 8px;
+  border-top: 1px solid var(--nbt-border);
+}
+.nbt-pp-label {
+  font-size: 12px;
+  color: var(--nbt-muted);
+  margin-bottom: 3px;
+}
+.nbt-pp-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 10px;
+}
+.nbt-pp-muted {
+  font-size: 12px;
+  color: var(--nbt-muted);
 }

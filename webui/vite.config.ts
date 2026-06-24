@@ -25,10 +25,11 @@ export default defineConfig({
     rollupOptions: {
       output: {
         // split big vendors into cacheable chunks; combined with lazy-loaded
-        // views, codemirror/xterm/litegraph stay out of the initial bundle.
+        // views, codemirror/xterm stay out of the initial bundle.
         manualChunks: {
           react: ["react", "react-dom"],
           antd: ["antd"],
+          reactflow: ["@xyflow/react"],
           codemirror: [
             "@uiw/react-codemirror",
             "@codemirror/lang-json",
@@ -40,7 +41,6 @@ export default defineConfig({
             "@uiw/codemirror-theme-material",
           ],
           xterm: ["@xterm/xterm", "@xterm/addon-fit"],
-          litegraph: ["litegraph.js"],
         },
       },
     },

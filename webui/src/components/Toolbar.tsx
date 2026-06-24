@@ -12,7 +12,6 @@ import {
 import {
   Copy,
   Keyboard,
-  Map as MapIcon,
   Maximize2,
   Network,
   Play,
@@ -32,13 +31,10 @@ import { activeGraphRef } from "../graph/active";
 const SHORTCUTS: [string, string][] = [
   ["Ctrl/⌘ Z", "Undo"],
   ["Ctrl/⌘ ⇧ Z  ·  Ctrl/⌘ Y", "Redo"],
-  ["Ctrl/⌘ C / X / V", "Copy / Cut / Paste"],
+  ["Ctrl/⌘ C / X / V", "Copy / Cut / Paste (across flows)"],
   ["Ctrl/⌘ D", "Duplicate selection"],
-  ["Ctrl/⌘ A", "Select all"],
   ["Ctrl/⌘ S", "Save workflow"],
-  ["F", "Zoom to fit"],
-  ["L", "Auto-layout"],
-  ["Delete", "Delete selection"],
+  ["Delete", "Delete selected node"],
 ];
 
 export default function Toolbar() {
@@ -53,8 +49,6 @@ export default function Toolbar() {
   const view = useStore((s) => s.view);
   const histCanUndo = useStore((s) => s.histCanUndo);
   const histCanRedo = useStore((s) => s.histCanRedo);
-  const minimapOn = useStore((s) => s.minimapOn);
-  const toggleMinimap = useStore((s) => s.toggleMinimap);
   const terminalOpen = useStore((s) => s.terminalOpen);
   const bottomTab = useStore((s) => s.bottomTab);
   const toggleTerminal = useStore((s) => s.toggleTerminal);
@@ -127,27 +121,20 @@ export default function Toolbar() {
   }
 
   const addItems = {
-    items: [
-      { key: "__note__", label: "📝 Note (annotation)" },
-      { type: "divider" as const },
-      ...Object.entries(
-        nodes.reduce<Record<string, typeof nodes>>((acc, n) => {
-          (acc[n.category] ||= []).push(n);
-          return acc;
-        }, {}),
-      ).map(([cat, list]) => ({
-        key: cat,
-        label: cat,
-        children: list.map((n) => ({
-          key: n.type,
-          label: n.label + (n.is_trigger ? " ⚡" : n.is_split ? " ⑂" : ""),
-        })),
+    items: Object.entries(
+      nodes.reduce<Record<string, typeof nodes>>((acc, n) => {
+        (acc[n.category] ||= []).push(n);
+        return acc;
+      }, {}),
+    ).map(([cat, list]) => ({
+      key: cat,
+      label: cat,
+      children: list.map((n) => ({
+        key: n.type,
+        label: n.label + (n.is_trigger ? " ⚡" : n.is_split ? " ⑂" : ""),
       })),
-    ],
-    onClick: ({ key }: { key: string }) => {
-      if (key === "__note__") activeGraphRef.current?.addNote();
-      else addNode(key);
-    },
+    })),
+    onClick: ({ key }: { key: string }) => addNode(key),
   };
 
   return (
@@ -202,24 +189,16 @@ export default function Toolbar() {
               onClick={() => activeGraphRef.current?.redo()}
             />
           </Tooltip>
-          <Tooltip title="Auto-layout (L)">
+          <Tooltip title="Auto-layout">
             <Button
               icon={<Network size={15} />}
               onClick={() => activeGraphRef.current?.autoLayout()}
             />
           </Tooltip>
-          <Tooltip title="Zoom to fit (F)">
+          <Tooltip title="Zoom to fit">
             <Button
               icon={<Maximize2 size={15} />}
-              onClick={() => activeGraphRef.current?.zoomToFit()}
-            />
-          </Tooltip>
-          <Tooltip title={minimapOn ? "Hide minimap" : "Show minimap"}>
-            <Button
-              type={minimapOn ? "primary" : "default"}
-              ghost={minimapOn}
-              icon={<MapIcon size={15} />}
-              onClick={toggleMinimap}
+              onClick={() => activeGraphRef.current?.fitView()}
             />
           </Tooltip>
           <Popover
@@ -231,17 +210,16 @@ export default function Toolbar() {
                 {SHORTCUTS.map(([keys, label]) => (
                   <div
                     key={label}
-                    style={{ display: "flex", justifyContent: "space-between", gap: 16 }}
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      gap: 16,
+                    }}
                   >
                     <span style={{ opacity: 0.7 }}>{label}</span>
-                    <kbd style={{ fontFamily: "var(--nbt-mono, monospace)" }}>
-                      {keys}
-                    </kbd>
+                    <kbd>{keys}</kbd>
                   </div>
                 ))}
-                <div style={{ opacity: 0.5, marginTop: 6, fontSize: 12 }}>
-                  Click the canvas first so it has keyboard focus.
-                </div>
               </div>
             }
           >

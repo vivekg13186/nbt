@@ -2,8 +2,9 @@
 
 The single-page front-end for **NBT (Node Based Tester)**, built with
 **Vite + React + TypeScript + Ant Design**, with the workflow canvas powered by
-**LiteGraph.js**. It is the only UI. It talks to NBT through the **FastAPI**
-backend (`api_server.py`) that wraps the engine, registry and SQLite database.
+**React Flow** (`@xyflow/react`). It is the only UI. It talks to NBT through the
+**FastAPI** backend (`api_server.py`) that wraps the engine, registry and SQLite
+database.
 
 ## Architecture
 
@@ -62,13 +63,19 @@ npm run build                        # outputs to webui/dist/
   also shows/hides the sidebar.
 - **Sidebar** — searchable list of workflows, the node palette, or environments.
 - **Main panel**
-  - *Workflows*: the LiteGraph canvas (HiDPI-aware). Right-click the canvas, use
-    **Add node**, or click a node in the Nodes palette; drag `out → in` to
-    connect (nodes grow extra input pins for joins); pan/zoom with the mouse.
-    Each node field has a `</>` code-editor dialog (CodeMirror, JSON/HTML/JS
-    highlighting) for large values. The canvas has **undo/redo**,
-    **copy/paste between workflows**, **duplicate**, **auto-layout**,
-    **zoom-to-fit**, and a draggable **minimap**; see *Keyboard shortcuts* below.
+  - *Workflows*: the **React Flow** canvas (dark). Each node shows just its
+    title with one input edge (left) and one output edge (right); drag from the
+    output handle to another node's input to connect. Add nodes via the
+    toolbar's **Add node** menu or by clicking a node in the Nodes palette;
+    pan/zoom with the mouse (built-in zoom **Controls** + **minimap**).
+    **Double-click** a node to open its **right-hand property panel** —
+    collapsible
+    **General** (name, pre, post), **Inputs** (the node's parameters), and
+    **Outputs** (alias each output to publish it) sections, where every text
+    field has a `</>` button that opens the code-editor dialog (CodeMirror).
+    The canvas has **undo/redo**, **copy/paste between workflows**,
+    **duplicate**, and **auto-layout** (toolbar + shortcuts below);
+    `Delete` removes the selected node.
   - *Nodes*: searchable palette grouped by category; click to add to the canvas.
   - *Packages*: install/update/remove node packages from a git URL or a
     `.nbtpack`/`.zip` bundle (with load-error reporting).
@@ -91,8 +98,7 @@ npm run build                        # outputs to webui/dist/
 
 ## Keyboard shortcuts
 
-Shortcuts act on the editor only while the canvas has focus (click it first), so
-typing in node fields, dialogs, and the shell is never intercepted:
+Active while the Workflows/Nodes view is open (and not while typing in a field):
 
 | Shortcut | Action |
 | --- | --- |
@@ -100,13 +106,12 @@ typing in node fields, dialogs, and the shell is never intercepted:
 | `Ctrl/⌘ ⇧ Z` or `Ctrl/⌘ Y` | Redo |
 | `Ctrl/⌘ C` / `X` / `V` | Copy / Cut / Paste (works across workflows) |
 | `Ctrl/⌘ D` | Duplicate selection |
-| `Ctrl/⌘ A` | Select all |
-| `Ctrl/⌘ S` | Save workflow |
-| `F` | Zoom to fit |
-| `L` | Auto-layout |
-| `Delete` | Delete selection |
+| `Ctrl/⌘ S` | Save the current workflow |
+| `Delete` | Delete the selected node |
 
-The same list is in the toolbar's keyboard-icon popover.
+Auto-layout and zoom-to-fit are toolbar buttons; pan/zoom and the minimap are
+the React Flow on-canvas **Controls**. The same shortcut list is in the
+toolbar's keyboard-icon popover.
 
 ## Notes
 

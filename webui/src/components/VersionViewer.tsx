@@ -1,9 +1,20 @@
-import { useEffect, useRef } from "react";
+import { useMemo } from "react";
 import { Button, Modal, Space, Tag } from "antd";
 import { Download, Play } from "lucide-react";
-import { NbtGraph } from "../graph/nbtGraph";
+import {
+  Background,
+  Controls,
+  MiniMap,
+  ReactFlow,
+  type ReactFlowInstance,
+} from "@xyflow/react";
+import "@xyflow/react/dist/style.css";
 import { useStore } from "../store";
+import { graphToFlow } from "../flow/serialize";
+import NbtNode from "./NbtNode";
 import type { FlowVersionDetail } from "../types";
+
+const nodeTypes = { nbt: NbtNode };
 
 export default function VersionViewer({
   version,
@@ -18,32 +29,12 @@ export default function VersionViewer({
   onRun: () => void;
   onExport: () => void;
 }) {
-  const nodes = useStore((s) => s.nodes);
-  const wrapRef = useRef<HTMLDivElement>(null);
-  const canvasRef = useRef<HTMLCanvasElement>(null);
-  const gRef = useRef<NbtGraph | null>(null);
-
-  useEffect(() => {
-    if (!version || !canvasRef.current || nodes.length === 0) return;
-    const g = new NbtGraph(canvasRef.current, nodes, {
-      readOnly: true,
-      reuseTypes: true, // reuse the main editor's globally-registered classes
-    });
-    gRef.current = g;
-    g.setTheme(true);
-    g.resize();
-    g.importGraph(version.graph);
-    // fit after the modal has laid out
-    const t = setTimeout(() => g.resize(), 60);
-    const ro = new ResizeObserver(() => g.resize());
-    if (wrapRef.current) ro.observe(wrapRef.current);
-    return () => {
-      clearTimeout(t);
-      ro.disconnect();
-      g.destroy();
-      gRef.current = null;
-    };
-  }, [version, nodes]);
+  const metas = useStore((s) => s.nodes);
+  const { nodes, edges } = useMemo(
+    () =>
+      version ? graphToFlow(version.graph, metas) : { nodes: [], edges: [] },
+    [version, metas],
+  );
 
   return (
     <Modal
@@ -51,17 +42,13 @@ export default function VersionViewer({
       onCancel={onClose}
       width={920}
       destroyOnClose
-      afterOpenChange={(o) => {
-        if (o) {
-          gRef.current?.resize();
-          gRef.current?.canvas.setDirty(true, true);
-        }
-      }}
       title={
         <Space>
           <span>{flowName}</span>
           {version && <Tag color="default">v{version.version}</Tag>}
-          {version?.label && <span style={{ opacity: 0.7 }}>{version.label}</span>}
+          {version?.label && (
+            <span style={{ opacity: 0.7 }}>{version.label}</span>
+          )}
           <Tag>read-only</Tag>
         </Space>
       }
@@ -83,7 +70,6 @@ export default function VersionViewer({
       ]}
     >
       <div
-        ref={wrapRef}
         style={{
           height: "60vh",
           position: "relative",
@@ -92,7 +78,25 @@ export default function VersionViewer({
           overflow: "hidden",
         }}
       >
-        <canvas ref={canvasRef} style={{ display: "block" }} />
+        <ReactFlow
+          key={version?.id}
+          defaultNodes={nodes}
+          defaultEdges={edges}
+          nodeTypes={nodeTypes}
+          colorMode="dark"
+          fitView
+          fitViewOptions={{ padding: 0.2 }}
+          nodesDraggable={false}
+          nodesConnectable={false}
+          elementsSelectable={false}
+          onInit={(inst: ReactFlowInstance) =>
+            setTimeout(() => inst.fitView({ padding: 0.2 }), 60)
+          }
+        >
+          <Background gap={18} />
+          <Controls showInteractive={false} />
+          <MiniMap pannable zoomable />
+        </ReactFlow>
       </div>
     </Modal>
   );
