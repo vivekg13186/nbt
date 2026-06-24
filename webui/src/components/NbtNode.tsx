@@ -7,8 +7,13 @@ import type { NbtData } from "../flow/serialize";
 function NbtNode({ data, selected }: NodeProps) {
   const d = data as unknown as NbtData;
   const marker = d.isTrigger ? " ⚡" : d.isSplit ? " ⑂" : "";
+  // a custom colour overrides the default trigger/split accent stripe
+  const style = d.color
+    ? { borderColor: d.color, borderLeft: `4px solid ${d.color}` }
+    : undefined;
   return (
     <div
+      style={style}
       className={
         "nbt-rf-node" +
         (selected ? " selected" : "") +

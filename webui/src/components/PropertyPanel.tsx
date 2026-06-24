@@ -1,4 +1,13 @@
-import { Button, Collapse, Input, InputNumber, Space, Switch, Tag } from "antd";
+import {
+  Button,
+  Collapse,
+  ColorPicker,
+  Input,
+  InputNumber,
+  Space,
+  Switch,
+  Tag,
+} from "antd";
 import { Code2, Trash2, X } from "lucide-react";
 import type { Node } from "@xyflow/react";
 import type { NodeMeta } from "../types";
@@ -76,6 +85,31 @@ export default function PropertyPanel({
           size="small"
           value={d.name}
           onChange={(e) => onChange({ name: e.target.value })}
+        />
+      </div>
+      <div className="nbt-pp-row">
+        <span className="nbt-pp-label">Color</span>
+        <ColorPicker
+          size="small"
+          value={d.color || null}
+          allowClear
+          onChangeComplete={(c) => onChange({ color: c.toHexString() })}
+          onClear={() => onChange({ color: undefined })}
+          presets={[
+            {
+              label: "Presets",
+              colors: [
+                "#5b8fd9",
+                "#faad14",
+                "#52c41a",
+                "#f5222d",
+                "#722ed1",
+                "#13c2c2",
+                "#eb2f96",
+                "#8c8c8c",
+              ],
+            },
+          ]}
         />
       </div>
       <CodeField

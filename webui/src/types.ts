@@ -53,6 +53,7 @@ export interface GraphNode {
   out_aliases: Record<string, string>;
   pos: [number, number];
   size?: [number, number];
+  color?: string; // UI-only accent colour (engine ignores it)
 }
 
 export interface GraphGroup {

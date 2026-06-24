@@ -15,6 +15,7 @@ export interface NbtData {
   aliases: Record<string, string>; // output name -> published variable
   isTrigger: boolean;
   isSplit: boolean;
+  color?: string; // optional custom accent colour
 }
 
 export function defaultsFor(meta: NodeMeta): Record<string, unknown> {
@@ -54,6 +55,7 @@ export function graphToFlow(
         aliases: { ...(n.out_aliases || {}) },
         isTrigger: !!m.is_trigger,
         isSplit: !!m.is_split,
+        color: n.color,
       };
       return {
         id: n.id,
@@ -105,6 +107,7 @@ export function flowToGraph(
       post: d.post || "",
       out_aliases: aliases,
       pos: [Math.round(n.position.x), Math.round(n.position.y)],
+      ...(d.color ? { color: d.color } : {}),
     };
   });
 
