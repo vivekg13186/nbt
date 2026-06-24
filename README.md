@@ -74,6 +74,21 @@ python api_server.py            # or ./run.sh  /  run.bat
 
 The database is created fresh on first launch (Demo Flow seeded).
 
+## Docker
+
+`docker_dist/` holds a two-step setup: a script stages the built UI + Python app, and a small **run-only** image serves it (no building inside Docker).
+
+```bash
+./docker_dist/build.sh             # builds webui/dist + stages files into docker_dist/app/
+cd docker_dist
+docker build -t nbt .
+docker run -p 8000:8000 -v nbt-data:/app/data nbt      # http://localhost:8000
+```
+
+(Use `./docker_dist/build.sh --skip-build` to reuse an existing `webui/dist`.) The image serves the built SPA and the API on port **8000**; the SQLite database lives at `/app/data/nbt.db` (persist it with the `nbt-data` volume). It bundles `bash` (Shell tab) and `git` (git-based package installs) and exposes a `/api/health` healthcheck. See `docker_dist/README.md` for details.
+
+Notes: only the **core** built-in nodes ship — node *packages* (and their extra pip deps) are installed at runtime from the Packages view. The trusted-network caveats apply: no auth, server-side Python eval, and an interactive shell, so don't expose the container publicly.
+
 ## Using the editor
 
 The UI is dark-mode only. The tab bar holds open workflows (right-click a tab for Save / Rename / Duplicate / Close / Delete / Export ▸ JSON or YAML), with buttons to add, import (`.json` / `.yaml`) and export (JSON or YAML) workflows. The toolbar has the active workflow name, Add node, an editing group (undo, redo, auto-layout, zoom-to-fit, minimap toggle, and a shortcuts help button), the environment picker, Save / Listen / Run, and toggles for the bottom panel. The left rail switches between Workflows, Nodes, Packages, Environments, Listeners, Schedules and Executions. The **Packages** view installs groups of custom nodes from a git URL or a `.nbtpack`/`.zip` bundle (see `docs/CUSTOM_NODES.md`).
